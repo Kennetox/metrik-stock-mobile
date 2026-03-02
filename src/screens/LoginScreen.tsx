@@ -30,7 +30,6 @@ const COLORS = {
   keyText: '#0F172A',
   keySecondaryBg: '#E1E9F3',
   keySecondaryText: '#1D4ED8',
-  footer: '#64748B',
   gearBg: '#F8FAFC',
   gearBorder: '#B7C4D5',
   gearText: '#334155',
@@ -227,8 +226,6 @@ export function LoginScreen() {
           </>
         )}
       </View>
-
-      <Text style={styles.footerNote}>Piloto interno • Kensar</Text>
 
       <Pressable style={styles.settingsButton} onPress={() => setShowSettings(true)}>
         <Text style={styles.settingsIcon}>⚙</Text>
@@ -432,12 +429,6 @@ const styles = StyleSheet.create({
     color: COLORS.keySecondaryText,
     fontWeight: '800',
     fontSize: 20,
-  },
-  footerNote: {
-    marginTop: 12,
-    textAlign: 'center',
-    color: COLORS.footer,
-    fontSize: 12,
   },
   settingsButton: {
     position: 'absolute',

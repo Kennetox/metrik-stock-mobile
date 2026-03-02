@@ -45,7 +45,7 @@ type AppSessionValue = {
 
 const AppSessionContext = createContext<AppSessionValue | null>(null);
 
-const DEFAULT_API_BASE = 'http://10.0.2.2:8000';
+const DEFAULT_API_BASE = 'https://api.metrikpos.com';
 const DEFAULT_STATION_ID = 'RECEPCION-01';
 const DEFAULT_STATION_LABEL = 'Recepción mostrador';
 const DEFAULT_PRINTER_DIRECT_URL = 'http://10.10.20.19:8081';

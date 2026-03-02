@@ -21,7 +21,7 @@ export function SettingsScreen() {
   return (
     <ScreenContainer backgroundColor="#E9EDF3">
       <Text style={styles.title}>Configuración</Text>
-      <Text style={styles.subtitle}>Parámetros de API e impresión para piloto</Text>
+      <Text style={styles.subtitle}>Parámetros de API e impresión</Text>
 
       <View style={styles.card}>
         <Text style={styles.label}>API Base</Text>
