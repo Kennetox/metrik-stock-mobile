@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Image, Linking, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 
 import { useAppSession } from '../contexts/AppSessionContext';
@@ -338,7 +338,11 @@ function ProfilePanel({
   }
 
   return (
-    <View style={styles.profileWrap}>
+    <ScrollView
+      style={styles.profileWrap}
+      contentContainerStyle={styles.profileScrollContent}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.profileCard}>
         <Text style={styles.profileTitle}>Perfil</Text>
         <Text style={styles.profileLine}>Usuario: {userName}</Text>
@@ -398,7 +402,7 @@ function ProfilePanel({
       <Pressable style={styles.profileLogoutBtn} onPress={onLogout}>
         <Text style={styles.profileLogoutText}>Cerrar sesión</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -475,8 +479,14 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   profileWrap: {
-    margin: 16,
+    flex: 1,
+    marginHorizontal: 16,
+    marginTop: 16,
+  },
+  profileScrollContent: {
+    flexGrow: 1,
     gap: 10,
+    paddingBottom: 172,
   },
   profileCard: {
     borderRadius: 12,
