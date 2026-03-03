@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Image,
   Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -91,6 +94,17 @@ function resolveReceivingSupportUrl(
   return `${normalizedApiBase}/${normalizedRelative.replace(/^\/+/, '')}`;
 }
 
+function isImageSupportFile(filename?: string | null): boolean {
+  if (!filename) return false;
+  const normalized = filename.trim().toLowerCase();
+  return (
+    normalized.endsWith('.jpg') ||
+    normalized.endsWith('.jpeg') ||
+    normalized.endsWith('.png') ||
+    normalized.endsWith('.webp')
+  );
+}
+
 export function HistoryScreen() {
   const { apiBase, apiClient } = useAppSession();
   const [tab, setTab] = useState<'documents' | 'products'>('documents');
@@ -104,6 +118,7 @@ export function HistoryScreen() {
   const [selectedDocDetail, setSelectedDocDetail] = useState<ReceivingLotDetail | null>(null);
   const [loadingSelectedDocDetail, setLoadingSelectedDocDetail] = useState(false);
   const [selectedDocDetailError, setSelectedDocDetailError] = useState<string | null>(null);
+  const [previewVisible, setPreviewVisible] = useState(false);
 
   const computeDateRange = useCallback(() => {
     if (range === 'all') return {};
@@ -232,6 +247,20 @@ export function HistoryScreen() {
   ]);
   const selectedDocNotes =
     selectedDocDetail?.lot.notes?.trim() || selectedDoc?.notes?.trim() || '';
+  const selectedSupportFileName =
+    selectedDocDetail?.lot.support_file_name || selectedDoc?.support_file_name || null;
+  const canPreviewSupportInApp = isImageSupportFile(selectedSupportFileName);
+
+  const openSupportFile = useCallback(() => {
+    if (!selectedSupportFileUrl) return;
+    if (canPreviewSupportInApp) {
+      setPreviewVisible(true);
+      return;
+    }
+    Linking.openURL(selectedSupportFileUrl).catch(() => {
+      Alert.alert('No se pudo abrir', 'No se pudo abrir el archivo adjunto.');
+    });
+  }, [selectedSupportFileUrl, canPreviewSupportInApp]);
 
   useEffect(() => {
     let active = true;
@@ -293,11 +322,11 @@ export function HistoryScreen() {
                 {selectedSupportFileUrl ? (
                   <Pressable
                     style={styles.downloadButton}
-                    onPress={() => {
-                      Linking.openURL(selectedSupportFileUrl).catch(() => undefined);
-                    }}
+                    onPress={openSupportFile}
                   >
-                    <Text style={styles.downloadButtonText}>Abrir soporte</Text>
+                    <Text style={styles.downloadButtonText}>
+                      {canPreviewSupportInApp ? 'Ver soporte aquí' : 'Abrir soporte'}
+                    </Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -330,6 +359,46 @@ export function HistoryScreen() {
                 : null}
             </View>
           </ScrollView>
+
+          <Modal
+            visible={previewVisible && !!selectedSupportFileUrl}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setPreviewVisible(false)}
+          >
+            <View style={styles.previewBackdrop}>
+              <View style={styles.previewCard}>
+                <Text style={styles.previewTitle} numberOfLines={1}>
+                  {selectedSupportFileName || 'Soporte adjunto'}
+                </Text>
+                {selectedSupportFileUrl ? (
+                  <Image
+                    source={{ uri: selectedSupportFileUrl }}
+                    style={styles.previewImage}
+                    resizeMode="contain"
+                  />
+                ) : null}
+                <View style={styles.previewActions}>
+                  <Pressable
+                    style={styles.previewSecondaryButton}
+                    onPress={() => setPreviewVisible(false)}
+                  >
+                    <Text style={styles.previewSecondaryText}>Cerrar</Text>
+                  </Pressable>
+                  {selectedSupportFileUrl ? (
+                    <Pressable
+                      style={styles.previewPrimaryButton}
+                      onPress={() => {
+                        Linking.openURL(selectedSupportFileUrl).catch(() => undefined);
+                      }}
+                    >
+                      <Text style={styles.previewPrimaryText}>Abrir externo</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+            </View>
+          </Modal>
         </>
       ) : (
         <>
@@ -703,6 +772,62 @@ const styles = StyleSheet.create({
   },
   detailItemMeta: {
     color: '#334155',
+    fontSize: 12,
+  },
+  previewBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.82)',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  previewCard: {
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 12,
+    padding: 10,
+    gap: 8,
+  },
+  previewTitle: {
+    color: '#F8FAFC',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  previewImage: {
+    width: '100%',
+    height: 420,
+    backgroundColor: '#020617',
+    borderRadius: 8,
+  },
+  previewActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  previewSecondaryButton: {
+    borderWidth: 1,
+    borderColor: '#64748B',
+    borderRadius: 8,
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  previewSecondaryText: {
+    color: '#E2E8F0',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  previewPrimaryButton: {
+    borderWidth: 1,
+    borderColor: '#67C48D',
+    borderRadius: 8,
+    backgroundColor: '#0A8F5A',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  previewPrimaryText: {
+    color: '#F8FAFC',
+    fontWeight: '700',
     fontSize: 12,
   },
 });
