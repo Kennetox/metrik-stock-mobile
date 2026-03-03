@@ -61,8 +61,33 @@ function bogotaBoundaryIso(ymd: string, time: 'start' | 'end'): string {
   return new Date(`${ymd}T${hhmmss}-05:00`).toISOString();
 }
 
+function resolveReceivingSupportUrl(
+  rawUrl: string | null | undefined,
+  apiBase: string,
+): string | null {
+  if (!rawUrl) return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  const normalizedApiBase = apiBase.replace(/\/$/, '');
+
+  if (trimmed.startsWith('/')) {
+    return `${normalizedApiBase}${trimmed}`;
+  }
+
+  const absoluteMatch = trimmed.match(/^https?:\/\/[^/]+(\/.*)?$/i);
+  if (absoluteMatch) {
+    const path = absoluteMatch[1] ?? '/';
+    if (path.startsWith('/uploads/receiving-support/')) {
+      return `${normalizedApiBase}${path}`;
+    }
+    return trimmed;
+  }
+
+  return `${normalizedApiBase}/${trimmed.replace(/^\/+/, '')}`;
+}
+
 export function HistoryScreen() {
-  const { apiClient } = useAppSession();
+  const { apiBase, apiClient } = useAppSession();
   const [tab, setTab] = useState<'documents' | 'products'>('documents');
   const [docs, setDocs] = useState<ReceivingDocument[]>([]);
   const [createdProducts, setCreatedProducts] = useState<ReceivingCreatedProduct[]>([]);
@@ -111,7 +136,14 @@ export function HistoryScreen() {
       const origin = (doc.origin_name || '').toLowerCase();
       const user = (doc.closed_by_user_name || '').toLowerCase();
       const supplier = (doc.supplier_name || '').toLowerCase();
-      return lot.includes(term) || origin.includes(term) || user.includes(term) || supplier.includes(term);
+      const notes = (doc.notes || '').toLowerCase();
+      return (
+        lot.includes(term) ||
+        origin.includes(term) ||
+        user.includes(term) ||
+        supplier.includes(term) ||
+        notes.includes(term)
+      );
     });
   }, [docs, query]);
 
@@ -133,6 +165,11 @@ export function HistoryScreen() {
       );
     });
   }, [createdProducts, query]);
+
+  const selectedSupportFileUrl = useMemo(
+    () => resolveReceivingSupportUrl(selectedDoc?.support_file_url, apiBase),
+    [selectedDoc?.support_file_url, apiBase],
+  );
 
   useEffect(() => {
     let active = true;
@@ -308,16 +345,19 @@ export function HistoryScreen() {
                 {selectedDoc.invoice_reference ? (
                   <Text style={styles.modalMeta}>Referencia factura: {selectedDoc.invoice_reference}</Text>
                 ) : null}
+                {selectedDoc.notes ? (
+                  <Text style={styles.modalMeta}>Observación: {selectedDoc.notes}</Text>
+                ) : null}
 
                 {selectedDoc.support_file_name ? (
                   <View style={styles.supportBox}>
                     <Text style={styles.supportTitle}>Soporte adjunto</Text>
                     <Text style={styles.supportMeta}>{selectedDoc.support_file_name}</Text>
-                    {selectedDoc.support_file_url ? (
+                    {selectedSupportFileUrl ? (
                       <Pressable
                         style={styles.downloadButton}
                         onPress={() => {
-                          Linking.openURL(selectedDoc.support_file_url as string).catch(() => undefined);
+                          Linking.openURL(selectedSupportFileUrl).catch(() => undefined);
                         }}
                       >
                         <Text style={styles.downloadButtonText}>Abrir soporte</Text>

@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -82,7 +85,10 @@ async function printDirect(printerUrl: string, payload: PrintPayload[]) {
   const isRootPath = parsed.pathname === '/' || parsed.pathname === '';
   const targets = [normalizedUrl];
   if (isRootPath) {
-    targets.push(`${normalizedUrl.replace(/\/+$/, '')}/print`);
+    const noSlash = normalizedUrl.replace(/\/+$/, '');
+    targets.push(`${noSlash}/print`);
+    targets.push(`${noSlash}/api/print`);
+    targets.push(`${noSlash}/labels/print`);
   }
 
   let lastError: Error | null = null;
@@ -132,18 +138,27 @@ async function printDirect(printerUrl: string, payload: PrintPayload[]) {
 }
 
 async function printWithBestPath(printerUrl: string, payload: PrintPayload[]) {
+  let nativeError: Error | null = null;
   if (hasNativePrintAgent()) {
     try {
       await printNative(printerUrl, payload, 4500);
       return;
-    } catch {
-      // fallback JS if native fails
+    } catch (err: unknown) {
+      nativeError = err instanceof Error ? err : new Error('No se pudo imprimir usando el agente nativo.');
     }
   }
-  await printDirect(printerUrl, payload);
+  try {
+    await printDirect(printerUrl, payload);
+  } catch (jsError: unknown) {
+    if (nativeError) {
+      throw new Error(nativeError.message || 'No se pudo imprimir con la impresora.');
+    }
+    throw jsError;
+  }
 }
 
 export function LabelsScreen() {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const {
     apiClient,
     apiBase,
@@ -170,8 +185,23 @@ export function LabelsScreen() {
   const [discoveringPrinters, setDiscoveringPrinters] = useState(false);
   const [discoveredPrinters, setDiscoveredPrinters] = useState<string[]>([]);
   const [discoveryMessage, setDiscoveryMessage] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   const sortedResults = useMemo(() => sortProductResults(rawResults, query), [rawResults, query]);
+  const resultsMaxHeight = useMemo(() => {
+    const isLandscape = windowWidth > windowHeight;
+    const baseUsable = windowHeight - keyboardHeight;
+    const usableHeight = Math.max(isLandscape ? 280 : 460, baseUsable);
+    if (keyboardVisible) {
+      const ratio = isLandscape ? 0.34 : 0.44;
+      const min = isLandscape ? 140 : 220;
+      return Math.max(min, Math.floor(usableHeight * ratio));
+    }
+    const ratio = isLandscape ? 0.7 : 0.6;
+    const min = isLandscape ? 220 : 300;
+    return Math.max(min, Math.floor(usableHeight * ratio));
+  }, [keyboardHeight, keyboardVisible, windowHeight, windowWidth]);
 
   const printerStatusMeta = useMemo(() => {
     if (printerStatus === 'online') {
@@ -232,11 +262,14 @@ export function LabelsScreen() {
       prefixes.add(`${a}.${b}.${c}`);
     }
 
-    // En emulador Android (10.0.2.x) agregamos subredes LAN comunes para detectar
-    // impresoras físicas en la red local sin depender solo del gateway virtual.
+    // Agregamos subredes LAN comunes para mejorar hallazgo en tablets con
+    // config de red distinta a la API o a la impresora guardada.
+    prefixes.add('192.168.0');
+    prefixes.add('192.168.1');
+
+    // En emulador Android (10.0.2.x) también agregamos LAN comunes.
     if (prefixes.has('10.0.2')) {
-      prefixes.add('192.168.0');
-      prefixes.add('192.168.1');
+      prefixes.add('10.0.3');
     }
 
     if (prefixes.size === 0) {
@@ -295,6 +328,25 @@ export function LabelsScreen() {
   useEffect(() => {
     checkPrinterConnection().catch(() => undefined);
   }, [checkPrinterConnection]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   function openSettings() {
     setSettingsUrl(printerDirectUrl);
@@ -407,6 +459,7 @@ export function LabelsScreen() {
         <View style={styles.printerStatusWrap}>
           <View style={[styles.statusDot, { backgroundColor: printerStatusMeta.color }]} />
           <Text style={styles.printerStatusText}>{printerStatusMeta.label}</Text>
+          {printerStatus === 'checking' ? <ActivityIndicator size="small" color="#0EA5E9" style={styles.statusSpinner} /> : null}
         </View>
         <View style={styles.topActions}>
           <Pressable
@@ -453,7 +506,7 @@ export function LabelsScreen() {
 
           {searching ? <ActivityIndicator color="#0A8F5A" /> : null}
 
-          <View style={styles.resultsWrap}>
+          <View style={[styles.resultsWrap, { maxHeight: resultsMaxHeight }]}>
             <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
               <View style={styles.resultsContent}>
                 {sortedResults.length === 0 && query.trim().length >= 2 && !searching ? (
@@ -465,7 +518,8 @@ export function LabelsScreen() {
                       {product.name}
                     </Text>
                     <Text style={styles.resultMeta}>
-                      SKU: {product.sku || 'N/A'} · Código de barras: {product.barcode || 'N/A'}
+                      <Text style={styles.resultMetaSku}>SKU: {product.sku || 'N/A'}</Text>
+                      <Text> · Código de barras: {product.barcode || 'N/A'}</Text>
                     </Text>
                     <Text style={styles.priceText}>Venta: {formatPriceText(product.price)}</Text>
                   </Pressable>
@@ -632,6 +686,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  statusSpinner: {
+    marginLeft: 2,
+  },
   topActions: {
     flexDirection: 'row',
     gap: 8,
@@ -708,7 +765,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   resultsWrap: {
-    maxHeight: 280,
+    minHeight: 140,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#B7C4D5',
@@ -746,6 +803,10 @@ const styles = StyleSheet.create({
   resultMeta: {
     color: '#334155',
     fontSize: 13,
+  },
+  resultMetaSku: {
+    color: '#0A8F5A',
+    fontWeight: '800',
   },
   priceText: {
     color: '#0F172A',

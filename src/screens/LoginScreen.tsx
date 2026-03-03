@@ -8,8 +8,10 @@ import {
   Text,
   TextInput,
   ToastAndroid,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppSession } from '../contexts/AppSessionContext';
 import { tabletEmailCheck } from '../services/api/auth';
@@ -46,6 +48,8 @@ const COLORS = {
 };
 
 export function LoginScreen() {
+  const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const {
     apiClient,
     loginWithPin,
@@ -59,7 +63,7 @@ export function LoginScreen() {
     setApiBase,
   } = useAppSession();
   const [emailInput, setEmailInput] = useState(tabletEmail);
-  const [emailStageDone, setEmailStageDone] = useState(Boolean(tabletEmail));
+  const [emailStageDone, setEmailStageDone] = useState(false);
   const [pin, setPin] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -136,100 +140,116 @@ export function LoginScreen() {
   }
 
   return (
-    <ScreenContainer backgroundColor={COLORS.pageBg}>
-      <View style={styles.brandWrap}>
-        <Image source={require('../assets/logo-stock.png')} style={styles.logoImage} resizeMode="contain" />
-        <View style={styles.brandTextWrap}>
-          <Text style={styles.title}>Metrik Stock</Text>
-          <Text style={styles.subtitle}>Recepción de inventario</Text>
+    <ScreenContainer backgroundColor={COLORS.pageBg} scrollEnabled={false}>
+      <View style={[styles.pageContent, { minHeight: Math.max(0, windowHeight - 32) }]}>
+        <View style={styles.brandWrap}>
+          <Image source={require('../assets/logo-stock.png')} style={styles.logoImage} resizeMode="contain" />
+          <View style={styles.brandTextWrap}>
+            <Text style={styles.title}>Metrik Stock</Text>
+            <Text style={styles.subtitle}>Recepción de inventario</Text>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          {!emailStageDone ? (
+            <View style={styles.emailStageWrap}>
+              <Text style={styles.emailStageLabel}>Correo de usuario</Text>
+              <View style={styles.emailInputWrap}>
+                <TextInput
+                  value={emailInput}
+                  onChangeText={setEmailInput}
+                  style={styles.emailInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  placeholder="usuario@metrikpos.com"
+                  placeholderTextColor="#64748B"
+                />
+                {emailInput.length > 0 ? (
+                  <Pressable
+                    style={styles.emailClearBtn}
+                    onPress={() => setEmailInput('')}
+                    hitSlop={8}
+                  >
+                    <Text style={styles.emailClearBtnText}>×</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              <Pressable
+                style={styles.emailNextButton}
+                onPress={() => {
+                  validateEmailAndContinue().catch(() => undefined);
+                }}
+                disabled={validatingEmail}
+              >
+                {validatingEmail ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.emailNextText}>Siguiente</Text>
+                )}
+              </Pressable>
+            </View>
+          ) : (
+            <>
+              <View style={styles.pinHeaderRow}>
+                <Text style={styles.pinEmailText} numberOfLines={1} ellipsizeMode="middle">
+                  {emailInput}
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    setEmailStageDone(false);
+                    setPin('');
+                  }}
+                >
+                  <Text style={styles.pinChangeEmailText}>Cambiar</Text>
+                </Pressable>
+              </View>
+              <View style={styles.pinDotsWrap}>
+                {Array.from({ length: PIN_LENGTH }).map((_, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.pinDot,
+                      index < pin.length ? styles.pinDotFilled : styles.pinDotEmpty,
+                    ]}
+                  />
+                ))}
+              </View>
+              {submitting ? (
+                <View style={styles.loadingWrap}>
+                  <ActivityIndicator color="#93c5fd" />
+                  <Text style={styles.loadingText}>Validando código...</Text>
+                </View>
+              ) : null}
+
+              <View style={styles.keypad}>
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+                  <Pressable key={digit} style={styles.keyButton} onPress={() => appendDigit(digit)}>
+                    <Text style={styles.keyText}>{digit}</Text>
+                  </Pressable>
+                ))}
+
+                <Pressable style={[styles.keyButton, styles.secondaryKey]} onPress={clearPin}>
+                  <Text style={styles.secondaryKeyText}>C</Text>
+                </Pressable>
+                <Pressable style={styles.keyButton} onPress={() => appendDigit('0')}>
+                  <Text style={styles.keyText}>0</Text>
+                </Pressable>
+                <Pressable style={[styles.keyButton, styles.secondaryKey]} onPress={backspacePin}>
+                  <Text style={styles.secondaryKeyText}>⌫</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
+        </View>
+
+        <View style={styles.loginSpacer} />
+        <View style={[styles.footerRow, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+          <Pressable style={styles.settingsButton} onPress={() => setShowSettings(true)}>
+            <Text style={styles.settingsIcon}>⚙</Text>
+          </Pressable>
         </View>
       </View>
-
-      <View style={styles.card}>
-        {!emailStageDone ? (
-          <View style={styles.emailStageWrap}>
-            <Text style={styles.emailStageLabel}>Correo de usuario</Text>
-            <TextInput
-              value={emailInput}
-              onChangeText={setEmailInput}
-              style={styles.emailInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              placeholder="usuario@metrikpos.com"
-              placeholderTextColor="#64748B"
-            />
-            <Pressable
-              style={styles.emailNextButton}
-              onPress={() => {
-                validateEmailAndContinue().catch(() => undefined);
-              }}
-              disabled={validatingEmail}
-            >
-              {validatingEmail ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.emailNextText}>Siguiente</Text>
-              )}
-            </Pressable>
-          </View>
-        ) : (
-          <>
-            <View style={styles.pinHeaderRow}>
-              <Text style={styles.pinEmailText} numberOfLines={1} ellipsizeMode="middle">
-                {emailInput}
-              </Text>
-              <Pressable
-                onPress={() => {
-                  setEmailStageDone(false);
-                  setPin('');
-                }}
-              >
-                <Text style={styles.pinChangeEmailText}>Cambiar</Text>
-              </Pressable>
-            </View>
-            <View style={styles.pinDotsWrap}>
-              {Array.from({ length: PIN_LENGTH }).map((_, index) => (
-                <View
-                  key={index}
-                  style={[
-                    styles.pinDot,
-                    index < pin.length ? styles.pinDotFilled : styles.pinDotEmpty,
-                  ]}
-                />
-              ))}
-            </View>
-            {submitting ? (
-              <View style={styles.loadingWrap}>
-                <ActivityIndicator color="#93c5fd" />
-                <Text style={styles.loadingText}>Validando código...</Text>
-              </View>
-            ) : null}
-
-            <View style={styles.keypad}>
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
-                <Pressable key={digit} style={styles.keyButton} onPress={() => appendDigit(digit)}>
-                  <Text style={styles.keyText}>{digit}</Text>
-                </Pressable>
-              ))}
-
-              <Pressable style={[styles.keyButton, styles.secondaryKey]} onPress={clearPin}>
-                <Text style={styles.secondaryKeyText}>C</Text>
-              </Pressable>
-              <Pressable style={styles.keyButton} onPress={() => appendDigit('0')}>
-                <Text style={styles.keyText}>0</Text>
-              </Pressable>
-              <Pressable style={[styles.keyButton, styles.secondaryKey]} onPress={backspacePin}>
-                <Text style={styles.secondaryKeyText}>⌫</Text>
-              </Pressable>
-            </View>
-          </>
-        )}
-      </View>
-
-      <Pressable style={styles.settingsButton} onPress={() => setShowSettings(true)}>
-        <Text style={styles.settingsIcon}>⚙</Text>
-      </Pressable>
 
       <Modal visible={showSettings} transparent animationType="fade" onRequestClose={() => setShowSettings(false)}>
         <View style={styles.modalBackdrop}>
@@ -274,6 +294,9 @@ export function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
+  pageContent: {
+    flex: 1,
+  },
   brandWrap: {
     marginTop: 10,
     alignItems: 'center',
@@ -328,6 +351,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   emailInput: {
+    flex: 1,
     backgroundColor: COLORS.inputBg,
     borderColor: COLORS.inputBorder,
     borderWidth: 1,
@@ -336,6 +360,28 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     color: COLORS.inputText,
     fontSize: 18,
+  },
+  emailInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  emailClearBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#B7C4D5',
+    backgroundColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emailClearBtnText: {
+    color: '#334155',
+    fontSize: 24,
+    lineHeight: 24,
+    fontWeight: '700',
+    marginTop: -1,
   },
   emailNextButton: {
     marginTop: 4,
@@ -430,10 +476,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 20,
   },
+  loginSpacer: {
+    flexGrow: 1,
+    minHeight: 12,
+  },
+  footerRow: {
+    marginTop: 8,
+    alignItems: 'flex-start',
+  },
   settingsButton: {
-    position: 'absolute',
-    left: 20,
-    bottom: 24,
     width: 42,
     height: 42,
     borderRadius: 21,

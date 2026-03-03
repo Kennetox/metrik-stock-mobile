@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   Modal,
   Pressable,
   ScrollView,
@@ -73,7 +74,10 @@ async function printDirect(printerUrl: string, payload: PrintPayload[]) {
   const isRootPath = parsed.pathname === '/' || parsed.pathname === '';
   const targets = [normalizedUrl];
   if (isRootPath) {
-    targets.push(`${normalizedUrl.replace(/\/+$/, '')}/print`);
+    const noSlash = normalizedUrl.replace(/\/+$/, '');
+    targets.push(`${noSlash}/print`);
+    targets.push(`${noSlash}/api/print`);
+    targets.push(`${noSlash}/labels/print`);
   }
 
   let lastError: Error | null = null;
@@ -115,20 +119,38 @@ async function printDirect(printerUrl: string, payload: PrintPayload[]) {
 }
 
 async function printWithBestPath(printerUrl: string, payload: PrintPayload[]) {
+  let nativeError: Error | null = null;
   if (hasNativePrintAgent()) {
     try {
       await printNative(printerUrl, payload, 4500);
       return;
-    } catch {
-      // fallback JS if native fails
+    } catch (err: unknown) {
+      nativeError = err instanceof Error ? err : new Error('No se pudo imprimir usando el agente nativo.');
     }
   }
-  await printDirect(printerUrl, payload);
+  try {
+    await printDirect(printerUrl, payload);
+  } catch (jsError: unknown) {
+    if (nativeError) {
+      throw new Error(nativeError.message || 'No se pudo imprimir con la impresora.');
+    }
+    throw jsError;
+  }
 }
 
-function parseLooseMoney(value: string): number {
-  const normalized = String(value || '').trim().replace(/\./g, '').replace(',', '.');
-  const parsed = Number(normalized);
+function formatMoneyInput(value: string): string {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  return Number(digits).toLocaleString('es-CO', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}
+
+function parseMoneyInput(value: string): number {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return NaN;
+  const parsed = Number(digits);
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
@@ -208,6 +230,7 @@ export function LotDetailScreen({
   const [groupSearch, setGroupSearch] = useState('');
   const [selectedGroupPath, setSelectedGroupPath] = useState('');
   const [selectedGroupLabel, setSelectedGroupLabel] = useState('');
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   const loadDetail = useCallback(async () => {
     setError(null);
@@ -233,6 +256,15 @@ export function LotDetailScreen({
       active = false;
     };
   }, [loadDetail]);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardOpen(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const totalUnits = useMemo(() => {
     if (!detail) return 0;
@@ -483,8 +515,8 @@ export function LotDetailScreen({
 
   async function handleCreateAndAddProduct() {
     const name = newProductName.trim();
-    const price = parseLooseMoney(newProductPrice);
-    const cost = newProductCost.trim() ? parseLooseMoney(newProductCost) : undefined;
+    const price = parseMoneyInput(newProductPrice);
+    const cost = newProductCost.trim() ? parseMoneyInput(newProductCost) : undefined;
     const qty = Number(newProductQty);
 
     if (!name) {
@@ -627,6 +659,7 @@ export function LotDetailScreen({
             <Text style={styles.lotNumber}>{detail.lot.lot_number}</Text>
             <Text style={styles.meta}>Origen: {detail.lot.origin_name}</Text>
             <Text style={styles.meta}>Tipo: {formatPurchaseType(detail.lot.purchase_type)}</Text>
+            {detail.lot.notes ? <Text style={styles.meta}>Observación: {detail.lot.notes}</Text> : null}
             {detail.lot.purchase_type === 'invoice' ? (
               <>
                 <Text style={styles.meta}>Proveedor: {detail.lot.supplier_name || 'Sin definir'}</Text>
@@ -702,8 +735,8 @@ export function LotDetailScreen({
                 </Text>
               ) : null}
 
-              <View style={styles.resultsWrap}>
-                <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
+              <View style={[styles.resultsWrap, keyboardOpen ? styles.resultsWrapKeyboard : null]}>
+                <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
                   <View style={styles.resultsContent}>
                     {productResults.map((product) => {
                       const isSelected = selectedProduct?.id === product.id;
@@ -711,7 +744,10 @@ export function LotDetailScreen({
                         <Pressable
                           key={product.id}
                           style={[styles.resultItem, isSelected ? styles.resultItemSelected : null]}
-                          onPress={() => setSelectedProduct(product)}
+                          onPress={() => {
+                            setSelectedProduct(product);
+                            Keyboard.dismiss();
+                          }}
                         >
                           <Text style={styles.resultName} numberOfLines={3}>
                             {product.name}
@@ -901,19 +937,19 @@ export function LotDetailScreen({
             <Text style={styles.modalLabel}>Precio venta *</Text>
             <TextInput
               value={newProductPrice}
-              onChangeText={setNewProductPrice}
+              onChangeText={(value) => setNewProductPrice(formatMoneyInput(value))}
               style={styles.modalInput}
-              keyboardType="decimal-pad"
-              placeholder="Ej: 630000"
+              keyboardType="numeric"
+              placeholder="Ej: 630.000"
               placeholderTextColor="#64748b"
             />
 
             <Text style={styles.modalLabel}>Costo (opcional)</Text>
             <TextInput
               value={newProductCost}
-              onChangeText={setNewProductCost}
+              onChangeText={(value) => setNewProductCost(formatMoneyInput(value))}
               style={styles.modalInput}
-              keyboardType="decimal-pad"
+              keyboardType="numeric"
               placeholder="Opcional"
               placeholderTextColor="#64748b"
             />
@@ -1285,6 +1321,9 @@ const styles = StyleSheet.create({
     borderColor: '#B7C4D5',
     backgroundColor: '#EEF3F9',
     overflow: 'hidden',
+  },
+  resultsWrapKeyboard: {
+    maxHeight: 150,
   },
   resultsContent: {
     padding: 6,

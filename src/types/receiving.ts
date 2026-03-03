@@ -74,6 +74,7 @@ export type ReceivingDocument = {
   closed_by_user_name?: string | null;
   supplier_name?: string | null;
   invoice_reference?: string | null;
+  notes?: string | null;
   support_file_name?: string | null;
   support_file_url?: string | null;
   support_file_size?: number | null;

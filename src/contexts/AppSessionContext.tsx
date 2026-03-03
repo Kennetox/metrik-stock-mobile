@@ -205,6 +205,7 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
 
   const logout = useCallback(() => {
     clearSession();
+    setTabletEmail('');
   }, [clearSession]);
 
   const refreshSyncStatus = useCallback(async () => {

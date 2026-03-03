@@ -40,6 +40,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   const [createOrigin, setCreateOrigin] = useState('');
   const [createSupplier, setCreateSupplier] = useState('');
   const [createReference, setCreateReference] = useState('');
+  const [createNotes, setCreateNotes] = useState('');
   const [creating, setCreating] = useState(false);
   const [selectedLot, setSelectedLot] = useState<ReceivingLot | null>(null);
   const [showLotActionsModal, setShowLotActionsModal] = useState(false);
@@ -48,6 +49,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   const [editType, setEditType] = useState<'cash' | 'invoice'>('cash');
   const [editSupplier, setEditSupplier] = useState('');
   const [editReference, setEditReference] = useState('');
+  const [editNotes, setEditNotes] = useState('');
   const [createSupportFile, setCreateSupportFile] = useState<SupportDraftFile | null>(null);
   const [editSupportFile, setEditSupportFile] = useState<SupportDraftFile | null>(null);
   const [updatingLot, setUpdatingLot] = useState(false);
@@ -85,6 +87,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
     setCreateOrigin(stationLabel?.trim() || stationId || 'Recepción');
     setCreateSupplier('');
     setCreateReference('');
+    setCreateNotes('');
     setCreateSupportFile(null);
     setShowCreateModal(true);
   }
@@ -187,6 +190,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
         supplier_name: createType === 'invoice' ? createSupplier.trim() : undefined,
         invoice_reference: createType === 'invoice' ? createReference.trim() : undefined,
         source_reference: createType === 'invoice' ? createReference.trim() : undefined,
+        notes: createNotes.trim() || undefined,
       });
       if (createSupportFile) {
         await uploadReceivingLotSupportFile(apiClient, created.id, createSupportFile);
@@ -215,6 +219,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
     setEditType(selectedLot.purchase_type);
     setEditSupplier(selectedLot.supplier_name ?? '');
     setEditReference(selectedLot.invoice_reference ?? selectedLot.source_reference ?? '');
+    setEditNotes(selectedLot.notes ?? '');
     setEditSupportFile(null);
     setShowLotActionsModal(false);
     setShowEditTypeModal(true);
@@ -240,6 +245,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
         supplier_name: editType === 'invoice' ? editSupplier.trim() : undefined,
         invoice_reference: editType === 'invoice' ? editReference.trim() : undefined,
         source_reference: editType === 'invoice' ? editReference.trim() : undefined,
+        notes: editNotes.trim() || undefined,
       });
       if (editSupportFile) {
         await uploadReceivingLotSupportFile(apiClient, selectedLot.id, editSupportFile);
@@ -306,6 +312,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
                 {lot.purchase_type === 'invoice' && (lot.invoice_reference || lot.source_reference) ? (
                   <Text style={styles.lotMeta}>Ref: {lot.invoice_reference ?? lot.source_reference}</Text>
                 ) : null}
+                {lot.notes ? <Text style={styles.lotMeta}>Obs: {lot.notes}</Text> : null}
               </Pressable>
               <Pressable style={styles.moreButton} onPress={() => openLotActions(lot)}>
                 <Text style={styles.moreButtonText}>⋮</Text>
@@ -324,6 +331,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
               {latestClosedLot.purchase_type === 'invoice' && latestClosedLot.supplier_name ? (
                 <Text style={styles.lotMeta}>Proveedor: {latestClosedLot.supplier_name}</Text>
               ) : null}
+              {latestClosedLot.notes ? <Text style={styles.lotMeta}>Obs: {latestClosedLot.notes}</Text> : null}
             </View>
           ) : (
             <Text style={styles.empty}>Aún no hay lotes cerrados</Text>
@@ -385,6 +393,19 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
                 />
               </>
             ) : null}
+            <Text style={styles.modalLabel}>Observación (opcional)</Text>
+            <TextInput
+              value={createNotes}
+              onChangeText={setCreateNotes}
+              style={[styles.modalInput, styles.modalTextarea]}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              autoCapitalize="sentences"
+              autoCorrect={false}
+              placeholder="Ej: Mercancía frágil, revisar 2 cajas..."
+              placeholderTextColor="#64748b"
+            />
 
             <Text style={styles.modalLabel}>Soporte (opcional)</Text>
             <Pressable
@@ -487,6 +508,19 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
                 />
               </>
             ) : null}
+            <Text style={styles.modalLabel}>Observación (opcional)</Text>
+            <TextInput
+              value={editNotes}
+              onChangeText={setEditNotes}
+              style={[styles.modalInput, styles.modalTextarea]}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              autoCapitalize="sentences"
+              autoCorrect={false}
+              placeholder="Ej: Mercancía frágil, revisar 2 cajas..."
+              placeholderTextColor="#64748b"
+            />
             <Text style={styles.modalLabel}>Soporte (opcional)</Text>
             <Pressable
               style={styles.supportPickerButton}
@@ -708,6 +742,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: '#0F172A',
+  },
+  modalTextarea: {
+    minHeight: 74,
   },
   supportPickerButton: {
     backgroundColor: '#EAF7F0',

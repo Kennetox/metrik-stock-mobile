@@ -5,13 +5,27 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 export function ScreenContainer({
   children,
   backgroundColor = '#0b1220',
+  scrollEnabled = true,
 }: {
   children: React.ReactNode;
   backgroundColor?: string;
+  scrollEnabled?: boolean;
 }) {
+  if (!scrollEnabled) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { backgroundColor }]}>
+        <View style={styles.content}>{children}</View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor }]}>
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         <View style={styles.content}>{children}</View>
       </ScrollView>
     </SafeAreaView>
@@ -27,7 +41,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   content: {
-    flex: 1,
     padding: 16,
     gap: 14,
   },

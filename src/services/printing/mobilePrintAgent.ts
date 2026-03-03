@@ -16,10 +16,18 @@ type PrintResponse = {
   status: number;
 };
 
+type AppInfoResponse = {
+  versionName?: string;
+  versionCode?: string;
+  packageName?: string;
+};
+
 type MobilePrintAgentNative = {
   discoverPrinters: (prefixes: string[], port: number, timeoutMs: number) => Promise<DiscoverNativeResponse>;
   checkEndpoint: (url: string, timeoutMs: number) => Promise<CheckEndpointResponse>;
   print: (url: string, payloadJson: string, timeoutMs: number) => Promise<PrintResponse>;
+  printHtml: (title: string, html: string) => Promise<boolean>;
+  getAppInfo: () => Promise<AppInfoResponse>;
 };
 
 const native = NativeModules.MobilePrintAgent as MobilePrintAgentNative | undefined;
@@ -46,4 +54,18 @@ export async function printNative(url: string, payload: unknown, timeoutMs = 400
     throw new Error('Native print agent no disponible en este dispositivo.');
   }
   return native.print(url, JSON.stringify(payload), timeoutMs);
+}
+
+export async function printHtmlNative(title: string, html: string): Promise<boolean> {
+  if (!hasNativePrintAgent() || !native?.printHtml) {
+    throw new Error('Función de impresión PDF no disponible en este dispositivo.');
+  }
+  return native.printHtml(title, html);
+}
+
+export async function getAppInfoNative(): Promise<AppInfoResponse> {
+  if (!hasNativePrintAgent() || !native?.getAppInfo) {
+    return {};
+  }
+  return native.getAppInfo();
 }

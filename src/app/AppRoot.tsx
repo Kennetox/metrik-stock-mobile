@@ -21,7 +21,7 @@ function AppGate() {
   if (!isHydrated) {
     return (
       <View style={styles.bootContainer}>
-        <StatusBar barStyle="dark-content" backgroundColor="#E9EDF3" />
+        <StatusBar barStyle="dark-content" backgroundColor="#E9EDF3" translucent={false} />
         <ActivityIndicator color="#93c5fd" size="large" />
       </View>
     );
@@ -29,14 +29,14 @@ function AppGate() {
   if (isAuthenticated) {
     return (
       <>
-        <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
+        <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" translucent={false} />
         <HomeScreen />
       </>
     );
   }
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#E9EDF3" />
+      <StatusBar barStyle="dark-content" backgroundColor="#E9EDF3" translucent={false} />
       <LoginScreen />
     </>
   );

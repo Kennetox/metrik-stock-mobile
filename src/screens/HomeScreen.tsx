@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
-import { ActivityIndicator, Image, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 
+import { SOP_RECEPCION_TABLET_V1 } from '../assets/sop/sopRecepcionTabletV1';
 import { useAppSession } from '../contexts/AppSessionContext';
+import { getAppInfoNative, hasNativePrintAgent, printHtmlNative } from '../services/printing/mobilePrintAgent';
 import { HistoryScreen } from './HistoryScreen';
 import { LabelsScreen } from './LabelsScreen';
 import { LotDetailScreen } from './LotDetailScreen';
@@ -34,6 +37,7 @@ const COLORS = {
 };
 
 export function HomeScreen() {
+  const insets = useSafeAreaInsets();
   const {
     user,
     logout,
@@ -49,10 +53,20 @@ export function HomeScreen() {
     labelFormat,
   } = useAppSession();
   const [tab, setTab] = useState<TabKey>('lots');
+  const [visitedTabs, setVisitedTabs] = useState<Record<TabKey, boolean>>({
+    lots: true,
+    labels: false,
+    history: false,
+    profile: false,
+  });
   const [selectedLotId, setSelectedLotId] = useState<number | null>(null);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [refreshingSync, setRefreshingSync] = useState(false);
   const inLotWorkspace = selectedLotId !== null;
+  const bottomInset = Math.max(insets.bottom, 10);
+  const topInset = Math.max(insets.top, 8);
+  const navReservedSpace = 84 + bottomInset;
+  const contentBottomPadding = inLotWorkspace ? 12 + bottomInset : navReservedSpace;
 
   const syncMeta = getSyncMeta(syncStatus);
   const lastSyncText = lastSyncAt ? formatDateTime(lastSyncAt) : 'Sin sincronización confirmada';
@@ -67,9 +81,14 @@ export function HomeScreen() {
     }
   }
 
+  function handleSelectTab(nextTab: TabKey) {
+    setTab(nextTab);
+    setVisitedTabs((prev) => (prev[nextTab] ? prev : { ...prev, [nextTab]: true }));
+  }
+
   return (
     <View style={styles.container}>
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { paddingTop: topInset + 6 }]}>
         <View style={styles.brandRow}>
           {inLotWorkspace ? (
             <Pressable
@@ -103,52 +122,64 @@ export function HomeScreen() {
         </View>
       </View>
 
-      <View style={[styles.content, inLotWorkspace ? styles.contentNoNav : null]}>
-        {tab === 'lots' ? (
-          selectedLotId ? (
-            <LotDetailScreen
-              lotId={selectedLotId}
-              onBack={() => setSelectedLotId(null)}
-              showInlineHeader={false}
-            />
-          ) : (
-            <LotsScreen onOpenLot={(id) => setSelectedLotId(id)} />
-          )
+      <View style={[styles.content, { paddingBottom: contentBottomPadding }, inLotWorkspace ? styles.contentNoNav : null]}>
+        {visitedTabs.lots ? (
+          <View style={[styles.tabScene, tab === 'lots' ? null : styles.tabSceneHidden]}>
+            {selectedLotId ? (
+              <LotDetailScreen
+                lotId={selectedLotId}
+                onBack={() => setSelectedLotId(null)}
+                showInlineHeader={false}
+              />
+            ) : (
+              <LotsScreen onOpenLot={(id) => setSelectedLotId(id)} />
+            )}
+          </View>
         ) : null}
 
-        {tab === 'labels' ? <LabelsScreen /> : null}
+        {visitedTabs.labels ? (
+          <View style={[styles.tabScene, tab === 'labels' ? null : styles.tabSceneHidden]}>
+            <LabelsScreen />
+          </View>
+        ) : null}
 
-        {tab === 'history' ? <HistoryScreen /> : null}
+        {visitedTabs.history ? (
+          <View style={[styles.tabScene, tab === 'history' ? null : styles.tabSceneHidden]}>
+            <HistoryScreen />
+          </View>
+        ) : null}
 
-        {tab === 'profile' ? (
-          <ProfilePanel
-            userName={user?.name ?? 'Usuario'}
-            userEmail={user?.email ?? null}
-            userRole={user?.role ?? null}
-            stationId={stationId}
-            stationLabel={stationLabel}
-            apiBase={apiBase}
-            printerDirectUrl={printerDirectUrl}
-            labelFormat={labelFormat}
-            syncLabel={syncMeta.label}
-            syncColor={syncMeta.color}
-            lastSyncText={lastSyncText}
-            lastCheckText={lastCheckText}
-            syncReason={syncReason}
-            refreshingSync={refreshingSync}
-            onRefreshSync={handleRefreshSync}
-            onLogout={logout}
-          />
+        {visitedTabs.profile ? (
+          <View style={[styles.tabScene, tab === 'profile' ? null : styles.tabSceneHidden]}>
+            <ProfilePanel
+              userName={user?.name ?? 'Usuario'}
+              userEmail={user?.email ?? null}
+              userRole={user?.role ?? null}
+              stationId={stationId}
+              stationLabel={stationLabel}
+              apiBase={apiBase}
+              printerDirectUrl={printerDirectUrl}
+              labelFormat={labelFormat}
+              syncLabel={syncMeta.label}
+              syncColor={syncMeta.color}
+              lastSyncText={lastSyncText}
+              lastCheckText={lastCheckText}
+              syncReason={syncReason}
+              refreshingSync={refreshingSync}
+              onRefreshSync={handleRefreshSync}
+              onLogout={logout}
+            />
+          </View>
         ) : null}
       </View>
 
       {!inLotWorkspace ? (
-        <View style={styles.bottomNavWrap}>
+        <View style={[styles.bottomNavWrap, { paddingBottom: bottomInset }]}>
           <View style={styles.bottomNav}>
-            <BottomTabButton icon="home" active={tab === 'lots'} onPress={() => setTab('lots')} />
-            <BottomTabButton icon="tag" active={tab === 'labels'} onPress={() => setTab('labels')} />
-            <BottomTabButton icon="report" active={tab === 'history'} onPress={() => setTab('history')} />
-            <BottomTabButton icon="profile" active={tab === 'profile'} onPress={() => setTab('profile')} />
+            <BottomTabButton icon="home" active={tab === 'lots'} onPress={() => handleSelectTab('lots')} />
+            <BottomTabButton icon="tag" active={tab === 'labels'} onPress={() => handleSelectTab('labels')} />
+            <BottomTabButton icon="report" active={tab === 'history'} onPress={() => handleSelectTab('history')} />
+            <BottomTabButton icon="profile" active={tab === 'profile'} onPress={() => handleSelectTab('profile')} />
           </View>
         </View>
       ) : null}
@@ -206,6 +237,50 @@ function formatDateTime(timestamp: number) {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildSopHtml(content: string): string {
+  const safe = escapeHtml(content);
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SOP Metrik Stock</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        color: #0f172a;
+        margin: 24px;
+        line-height: 1.45;
+        font-size: 13px;
+      }
+      h1 {
+        margin: 0 0 16px 0;
+        color: #0a8f5a;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: inherit;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>SOP Operativo - Recepción en Tablet</h1>
+    <pre>${safe}</pre>
+  </body>
+</html>`;
 }
 
 function BottomTabButton({
@@ -331,78 +406,161 @@ function ProfilePanel({
   onRefreshSync: () => Promise<void>;
   onLogout: () => void;
 }) {
-  function openSopGuide() {
-    const base = apiBase.replace(/\/$/, '');
-    const sopUrl = `${base}/receiving/sop/download`;
-    Linking.openURL(sopUrl).catch(() => undefined);
+  const [showSopModal, setShowSopModal] = useState(false);
+  const [savingSopPdf, setSavingSopPdf] = useState(false);
+  const [appBuildLabel, setAppBuildLabel] = useState('Versión no disponible');
+  const sopText = SOP_RECEPCION_TABLET_V1.trim();
+
+  useEffect(() => {
+    let active = true;
+    getAppInfoNative()
+      .then((info) => {
+        if (!active) return;
+        if (info.versionName && info.versionCode) {
+          setAppBuildLabel(`v${info.versionName} (${info.versionCode})`);
+          return;
+        }
+        if (info.versionName) {
+          setAppBuildLabel(`v${info.versionName}`);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function handleSaveSopPdf() {
+    if (!hasNativePrintAgent()) {
+      Alert.alert('No disponible', 'Guardar PDF está disponible en Android.');
+      return;
+    }
+    setSavingSopPdf(true);
+    try {
+      await printHtmlNative('SOP-Metrik-Stock-v1', buildSopHtml(sopText));
+      Alert.alert('Listo', 'Se abrió el diálogo para imprimir o guardar en PDF.');
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : 'No se pudo abrir guardar PDF.';
+      Alert.alert('Error', detail);
+    } finally {
+      setSavingSopPdf(false);
+    }
   }
 
   return (
-    <ScrollView
-      style={styles.profileWrap}
-      contentContainerStyle={styles.profileScrollContent}
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.profileCard}>
-        <Text style={styles.profileTitle}>Perfil</Text>
-        <Text style={styles.profileLine}>Usuario: {userName}</Text>
-        {userEmail ? <Text style={styles.profileLine}>Correo: {userEmail}</Text> : null}
-        {userRole ? <Text style={styles.profileLine}>Rol: {userRole}</Text> : null}
-      </View>
-
-      <View style={styles.profileCard}>
-        <Text style={styles.profileTitle}>Estación</Text>
-        <Text style={styles.profileLine}>ID: {stationId}</Text>
-        <Text style={styles.profileLine}>Nombre: {stationLabel}</Text>
-      </View>
-
-      <View style={styles.profileCard}>
-        <Text style={styles.profileTitle}>Conectividad</Text>
-        <View style={styles.profileSyncRow}>
-          <View style={[styles.syncDot, { backgroundColor: syncColor }]} />
-          <Text style={styles.profileLine}>{syncLabel}</Text>
+    <>
+      <ScrollView
+        style={styles.profileWrap}
+        contentContainerStyle={styles.profileScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.profileCard}>
+          <Text style={styles.profileTitle}>Perfil</Text>
+          <Text style={styles.profileLine}>Usuario: {userName}</Text>
+          {userEmail ? <Text style={styles.profileLine}>Correo: {userEmail}</Text> : null}
+          {userRole ? <Text style={styles.profileLine}>Rol: {userRole}</Text> : null}
         </View>
-        <Text style={styles.profileLineSmall}>Última sync: {lastSyncText}</Text>
-        <Text style={styles.profileLineSmall}>Último chequeo: {lastCheckText}</Text>
-        {syncReason ? <Text style={styles.profileLineSmall}>Detalle: {syncReason}</Text> : null}
-        <Pressable style={styles.profileSecondaryBtn} onPress={() => { onRefreshSync().catch(() => undefined); }}>
-          {refreshingSync ? (
-            <ActivityIndicator size="small" color="#0A8F5A" />
-          ) : (
-            <Text style={styles.profileSecondaryText}>Revalidar conexión</Text>
-          )}
+
+        <View style={styles.profileCard}>
+          <Text style={styles.profileTitle}>Estación</Text>
+          <Text style={styles.profileLine}>ID: {stationId}</Text>
+          <Text style={styles.profileLine}>Nombre: {stationLabel}</Text>
+        </View>
+
+        <View style={styles.profileCard}>
+          <Text style={styles.profileTitle}>Conectividad</Text>
+          <View style={styles.profileSyncRow}>
+            <View style={[styles.syncDot, { backgroundColor: syncColor }]} />
+            <Text style={styles.profileLine}>{syncLabel}</Text>
+          </View>
+          <Text style={styles.profileLineSmall}>Última sync: {lastSyncText}</Text>
+          <Text style={styles.profileLineSmall}>Último chequeo: {lastCheckText}</Text>
+          {syncReason ? <Text style={styles.profileLineSmall}>Detalle: {syncReason}</Text> : null}
+          <Pressable style={styles.profileSecondaryBtn} onPress={() => { onRefreshSync().catch(() => undefined); }}>
+            {refreshingSync ? (
+              <ActivityIndicator size="small" color="#0A8F5A" />
+            ) : (
+              <Text style={styles.profileSecondaryText}>Revalidar conexión</Text>
+            )}
+          </Pressable>
+        </View>
+
+        <View style={styles.profileCard}>
+          <Text style={styles.profileTitle}>Impresión</Text>
+          <Text style={styles.profileLineSmall} numberOfLines={1}>
+            Impresora: {printerDirectUrl}
+          </Text>
+          <Text style={styles.profileLineSmall}>Formato: {labelFormat || 'Kensar'}</Text>
+        </View>
+
+        <View style={styles.profileCard}>
+          <Text style={styles.profileTitle}>API</Text>
+          <Text style={styles.profileLineSmall} numberOfLines={1}>
+            {apiBase}
+          </Text>
+        </View>
+
+        <View style={styles.profileCard}>
+          <Text style={styles.profileTitle}>SOP operativo</Text>
+          <Text style={styles.profileLineSmall}>
+            Guía oficial de recepción en tablet (v1), disponible offline.
+          </Text>
+          <View style={styles.profileActionRow}>
+            <Pressable style={styles.profileSecondaryBtn} onPress={() => setShowSopModal(true)}>
+              <Text style={styles.profileSecondaryText}>Abrir SOP</Text>
+            </Pressable>
+            <Pressable
+              style={styles.profileSecondaryBtn}
+              onPress={() => {
+                handleSaveSopPdf().catch(() => undefined);
+              }}
+              disabled={savingSopPdf}
+            >
+              {savingSopPdf ? (
+                <ActivityIndicator size="small" color="#0A8F5A" />
+              ) : (
+                <Text style={styles.profileSecondaryText}>Guardar PDF</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+
+        <Pressable style={styles.profileLogoutBtn} onPress={onLogout}>
+          <Text style={styles.profileLogoutText}>Cerrar sesión</Text>
         </Pressable>
-      </View>
+        <Text style={styles.profileBuildText}>Metrik Stock {appBuildLabel}</Text>
+      </ScrollView>
 
-      <View style={styles.profileCard}>
-        <Text style={styles.profileTitle}>Impresión</Text>
-        <Text style={styles.profileLineSmall} numberOfLines={1}>
-          Impresora: {printerDirectUrl}
-        </Text>
-        <Text style={styles.profileLineSmall}>Formato: {labelFormat || 'Kensar'}</Text>
-      </View>
-
-      <View style={styles.profileCard}>
-        <Text style={styles.profileTitle}>API</Text>
-        <Text style={styles.profileLineSmall} numberOfLines={1}>
-          {apiBase}
-        </Text>
-      </View>
-
-      <View style={styles.profileCard}>
-        <Text style={styles.profileTitle}>SOP operativo</Text>
-        <Text style={styles.profileLineSmall}>
-          Guía oficial de recepción en tablet (v1).
-        </Text>
-        <Pressable style={styles.profileSecondaryBtn} onPress={openSopGuide}>
-          <Text style={styles.profileSecondaryText}>Descargar SOP</Text>
-        </Pressable>
-      </View>
-
-      <Pressable style={styles.profileLogoutBtn} onPress={onLogout}>
-        <Text style={styles.profileLogoutText}>Cerrar sesión</Text>
-      </Pressable>
-    </ScrollView>
+      <Modal visible={showSopModal} transparent animationType="fade" onRequestClose={() => setShowSopModal(false)}>
+        <View style={styles.sopModalBackdrop}>
+          <View style={styles.sopModalCard}>
+            <Text style={styles.sopModalTitle}>SOP Recepción Tablet v1</Text>
+            <ScrollView style={styles.sopBodyWrap} contentContainerStyle={styles.sopBodyContent}>
+              <Text style={styles.sopBodyText}>{sopText}</Text>
+            </ScrollView>
+            <View style={styles.sopModalActions}>
+              <Pressable style={styles.syncModalCloseButton} onPress={() => setShowSopModal(false)}>
+                <Text style={styles.syncModalCloseText}>Cerrar</Text>
+              </Pressable>
+              <Pressable
+                style={styles.syncModalRefreshButton}
+                onPress={() => {
+                  handleSaveSopPdf().catch(() => undefined);
+                }}
+                disabled={savingSopPdf}
+              >
+                {savingSopPdf ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.syncModalRefreshText}>Guardar PDF</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -435,8 +593,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   brandLogo: {
-    width: 24,
-    height: 24,
+    width: 30,
+    height: 30,
   },
   brandName: {
     color: COLORS.title,
@@ -473,7 +631,12 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    paddingBottom: 96,
+  },
+  tabScene: {
+    flex: 1,
+  },
+  tabSceneHidden: {
+    display: 'none',
   },
   contentNoNav: {
     paddingBottom: 12,
@@ -533,6 +696,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
   },
+  profileActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   profileLogoutBtn: {
     borderRadius: 12,
     borderWidth: 1,
@@ -546,6 +714,13 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     fontWeight: '800',
     fontSize: 15,
+  },
+  profileBuildText: {
+    marginTop: 2,
+    textAlign: 'center',
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '600',
   },
   bottomNavWrap: {
     position: 'absolute',
@@ -652,5 +827,45 @@ const styles = StyleSheet.create({
   syncModalRefreshText: {
     color: '#F8FAFC',
     fontWeight: '700',
+  },
+  sopModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.32)',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 20,
+  },
+  sopModalCard: {
+    maxHeight: '90%',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    padding: 14,
+    gap: 10,
+  },
+  sopModalTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  sopBodyWrap: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  sopBodyContent: {
+    padding: 12,
+  },
+  sopBodyText: {
+    color: '#1E293B',
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  sopModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
   },
 });

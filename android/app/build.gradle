@@ -82,29 +82,36 @@ android {
         applicationId "com.kensar_mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 6
+        versionName "1.0.5"
     }
     signingConfigs {
-        debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
+    debug {
+        storeFile file('debug.keystore')
+        storePassword 'android'
+        keyAlias 'androiddebugkey'
+        keyPassword 'android'
+    }
+    release {
+        if (project.hasProperty('METRIK_UPLOAD_STORE_FILE')) {
+            storeFile file("../app/${METRIK_UPLOAD_STORE_FILE}")
+            storePassword METRIK_UPLOAD_STORE_PASSWORD
+            keyAlias METRIK_UPLOAD_KEY_ALIAS
+            keyPassword METRIK_UPLOAD_KEY_PASSWORD
         }
     }
-    buildTypes {
-        debug {
-            signingConfig signingConfigs.debug
-        }
-        release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
-            minifyEnabled enableProguardInReleaseBuilds
-            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
-        }
+}
+
+buildTypes {
+    debug {
+        signingConfig signingConfigs.debug
     }
+    release {
+        signingConfig signingConfigs.release
+        minifyEnabled enableProguardInReleaseBuilds
+        proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+    }
+}
 }
 
 dependencies {

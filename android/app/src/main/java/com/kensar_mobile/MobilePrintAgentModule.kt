@@ -1,5 +1,11 @@
 package com.kensar_mobile
 
+import android.content.Context
+import android.os.Build
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -224,6 +230,77 @@ class MobilePrintAgentModule(private val reactContext: ReactApplicationContext) 
         promise.reject("PRINT_EXCEPTION", e.message, e)
       }
     }.start()
+  }
+
+  @ReactMethod
+  fun printHtml(title: String, html: String, promise: Promise) {
+    val activity = reactApplicationContext.currentActivity
+    if (activity == null) {
+      promise.reject("NO_ACTIVITY", "No hay actividad activa para abrir impresión.")
+      return
+    }
+
+    activity.runOnUiThread {
+      try {
+        val webView = WebView(activity)
+        webView.settings.javaScriptEnabled = false
+        webView.settings.domStorageEnabled = false
+        webView.webViewClient = object : WebViewClient() {
+          override fun onPageFinished(view: WebView?, url: String?) {
+            try {
+              val printManager = activity.getSystemService(Context.PRINT_SERVICE) as PrintManager
+              val safeTitle = if (title.trim().isNotEmpty()) title.trim() else "SOP Metrik Stock"
+              val adapter = webView.createPrintDocumentAdapter(safeTitle)
+              printManager.print(
+                safeTitle,
+                adapter,
+                PrintAttributes.Builder().build()
+              )
+              promise.resolve(true)
+            } catch (e: Exception) {
+              promise.reject("PRINT_HTML_FAILED", e.message, e)
+            }
+          }
+        }
+        webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+      } catch (e: Exception) {
+        promise.reject("PRINT_HTML_EXCEPTION", e.message, e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun getAppInfo(promise: Promise) {
+    try {
+      val context = reactApplicationContext
+      val packageName = context.packageName
+      val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        context.packageManager.getPackageInfo(
+          packageName,
+          android.content.pm.PackageManager.PackageInfoFlags.of(0)
+        )
+      } else {
+        @Suppress("DEPRECATION")
+        context.packageManager.getPackageInfo(packageName, 0)
+      }
+
+      val versionName = packageInfo.versionName ?: "0.0.0"
+      val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        packageInfo.longVersionCode.toString()
+      } else {
+        @Suppress("DEPRECATION")
+        packageInfo.versionCode.toString()
+      }
+
+      val map = Arguments.createMap().apply {
+        putString("versionName", versionName)
+        putString("versionCode", versionCode)
+        putString("packageName", packageName)
+      }
+      promise.resolve(map)
+    } catch (e: Exception) {
+      promise.reject("APP_INFO_FAILED", e.message, e)
+    }
   }
 
   private fun normalizeUrl(raw: String): String {
