@@ -822,12 +822,32 @@ export function LotDetailScreen({
                     <>
                       <View style={styles.editQtyRow}>
                         <Text style={styles.editQtyLabel}>Cantidad</Text>
-                        <TextInput
-                          value={editQtyInput}
-                          onChangeText={setEditQtyInput}
-                          style={[styles.modalInput, styles.editQtyInput]}
-                          keyboardType="numeric"
-                        />
+                        <View style={styles.qtyRow}>
+                          <Pressable
+                            style={styles.qtyStepBtn}
+                            onPress={() => {
+                              const current = Number(editQtyInput) || 1;
+                              setEditQtyInput(String(Math.max(1, current - 1)));
+                            }}
+                          >
+                            <Text style={styles.qtyStepText}>-</Text>
+                          </Pressable>
+                          <TextInput
+                            value={editQtyInput}
+                            onChangeText={setEditQtyInput}
+                            style={[styles.modalInput, styles.qtyInput, styles.editQtyInput]}
+                            keyboardType="numeric"
+                          />
+                          <Pressable
+                            style={styles.qtyStepBtn}
+                            onPress={() => {
+                              const current = Number(editQtyInput) || 1;
+                              setEditQtyInput(String(current + 1));
+                            }}
+                          >
+                            <Text style={styles.qtyStepText}>+</Text>
+                          </Pressable>
+                        </View>
                       </View>
                       <View style={styles.itemActionsRow}>
                         <Pressable style={styles.itemActionSecondary} onPress={cancelEditItem}>

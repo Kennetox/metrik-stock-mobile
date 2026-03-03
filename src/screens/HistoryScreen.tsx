@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,8 +11,8 @@ import {
 } from 'react-native';
 
 import { useAppSession } from '../contexts/AppSessionContext';
-import { listReceivingCreatedProducts, listReceivingDocuments } from '../services/api/receiving';
-import type { ReceivingCreatedProduct, ReceivingDocument } from '../types/receiving';
+import { getLotDetail, listReceivingCreatedProducts, listReceivingDocuments } from '../services/api/receiving';
+import type { ReceivingCreatedProduct, ReceivingDocument, ReceivingLotDetail } from '../types/receiving';
 import { ScreenContainer } from '../ui/ScreenContainer';
 
 function formatPurchaseType(type: string) {
@@ -77,13 +76,19 @@ function resolveReceivingSupportUrl(
   const absoluteMatch = trimmed.match(/^https?:\/\/[^/]+(\/.*)?$/i);
   if (absoluteMatch) {
     const path = absoluteMatch[1] ?? '/';
-    if (path.startsWith('/uploads/receiving-support/')) {
-      return `${normalizedApiBase}${path}`;
+    const normalizedPath = path
+      .replace(/^\/upload\//, '/uploads/')
+      .replace(/^\/receiving-support\//, '/uploads/receiving-support/');
+    if (normalizedPath.includes('/receiving-support/')) {
+      return `${normalizedApiBase}${normalizedPath}`;
     }
     return trimmed;
   }
 
-  return `${normalizedApiBase}/${trimmed.replace(/^\/+/, '')}`;
+  const normalizedRelative = trimmed
+    .replace(/^upload\//, 'uploads/')
+    .replace(/^receiving-support\//, 'uploads/receiving-support/');
+  return `${normalizedApiBase}/${normalizedRelative.replace(/^\/+/, '')}`;
 }
 
 export function HistoryScreen() {
@@ -96,6 +101,9 @@ export function HistoryScreen() {
   const [query, setQuery] = useState('');
   const [range, setRange] = useState<'today' | '7d' | '30d' | 'all'>('30d');
   const [selectedDoc, setSelectedDoc] = useState<ReceivingDocument | null>(null);
+  const [selectedDocDetail, setSelectedDocDetail] = useState<ReceivingLotDetail | null>(null);
+  const [loadingSelectedDocDetail, setLoadingSelectedDocDetail] = useState(false);
+  const [selectedDocDetailError, setSelectedDocDetailError] = useState<string | null>(null);
 
   const computeDateRange = useCallback(() => {
     if (range === 'all') return {};
@@ -166,10 +174,47 @@ export function HistoryScreen() {
     });
   }, [createdProducts, query]);
 
-  const selectedSupportFileUrl = useMemo(
-    () => resolveReceivingSupportUrl(selectedDoc?.support_file_url, apiBase),
-    [selectedDoc?.support_file_url, apiBase],
-  );
+  useEffect(() => {
+    let active = true;
+    if (!selectedDoc) {
+      setSelectedDocDetail(null);
+      setSelectedDocDetailError(null);
+      setLoadingSelectedDocDetail(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    setSelectedDocDetail(null);
+    setSelectedDocDetailError(null);
+    setLoadingSelectedDocDetail(true);
+
+    getLotDetail(apiClient, selectedDoc.id)
+      .then((detail) => {
+        if (!active) return;
+        setSelectedDocDetail(detail);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setSelectedDocDetailError(err instanceof Error ? err.message : 'No se pudo cargar el detalle de recepción');
+      })
+      .finally(() => {
+        if (!active) return;
+        setLoadingSelectedDocDetail(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [apiClient, selectedDoc]);
+
+  const selectedSupportFileUrl = useMemo(() => {
+    const supportUrl =
+      selectedDocDetail?.lot.support_file_url ?? selectedDoc?.support_file_url;
+    return resolveReceivingSupportUrl(supportUrl, apiBase);
+  }, [selectedDoc?.support_file_url, selectedDocDetail?.lot.support_file_url, apiBase]);
+  const selectedDocNotes =
+    selectedDocDetail?.lot.notes?.trim() || selectedDoc?.notes?.trim() || '';
 
   useEffect(() => {
     let active = true;
@@ -192,6 +237,85 @@ export function HistoryScreen() {
 
   return (
     <ScreenContainer backgroundColor="#E9EDF3">
+      {selectedDoc ? (
+        <>
+          <View style={styles.headerRow}>
+            <Text style={styles.title}>Detalle recepción</Text>
+            <Pressable style={styles.refreshButton} onPress={() => setSelectedDoc(null)}>
+              <Text style={styles.refreshButtonText}>Volver</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.detailHeaderCard}>
+            <Text style={styles.modalTitle}>{selectedDoc.lot_number}</Text>
+            <Text style={styles.modalMeta}>Estado: Cerrado</Text>
+            <Text style={styles.modalMeta}>Tipo: {formatPurchaseType(selectedDoc.purchase_type)}</Text>
+            <Text style={styles.modalMeta}>Origen: {selectedDoc.origin_name}</Text>
+            <Text style={styles.modalMeta}>Líneas: {selectedDoc.lines_count}</Text>
+            <Text style={styles.modalMeta}>Unidades: {selectedDoc.units_total}</Text>
+            <Text style={styles.modalMeta}>Cerrado: {formatDateTime(selectedDoc.closed_at)}</Text>
+            {selectedDoc.closed_by_user_name ? (
+              <Text style={styles.modalMeta}>Responsable: {selectedDoc.closed_by_user_name}</Text>
+            ) : null}
+            {selectedDoc.supplier_name ? (
+              <Text style={styles.modalMeta}>Proveedor: {selectedDoc.supplier_name}</Text>
+            ) : null}
+            {selectedDoc.invoice_reference ? (
+              <Text style={styles.modalMeta}>Referencia factura: {selectedDoc.invoice_reference}</Text>
+            ) : null}
+            {selectedDocNotes ? (
+              <Text style={styles.modalMeta}>Observación: {selectedDocNotes}</Text>
+            ) : null}
+          </View>
+
+          <ScrollView style={styles.listScroll} contentContainerStyle={styles.detailScreenContent}>
+            {selectedDoc.support_file_name ? (
+              <View style={styles.supportBox}>
+                <Text style={styles.supportTitle}>Soporte adjunto</Text>
+                <Text style={styles.supportMeta}>{selectedDoc.support_file_name}</Text>
+                {selectedSupportFileUrl ? (
+                  <Pressable
+                    style={styles.downloadButton}
+                    onPress={() => {
+                      Linking.openURL(selectedSupportFileUrl).catch(() => undefined);
+                    }}
+                  >
+                    <Text style={styles.downloadButtonText}>Abrir soporte</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+
+            <View style={styles.detailSection}>
+              <Text style={styles.detailSectionTitle}>Productos recibidos</Text>
+              {loadingSelectedDocDetail ? <ActivityIndicator color="#0A8F5A" /> : null}
+              {selectedDocDetailError ? (
+                <Text style={styles.detailErrorText}>{selectedDocDetailError}</Text>
+              ) : null}
+              {!loadingSelectedDocDetail && !selectedDocDetailError && selectedDocDetail?.items.length === 0 ? (
+                <Text style={styles.detailEmptyText}>No hay ítems registrados en este lote.</Text>
+              ) : null}
+              {!loadingSelectedDocDetail && !selectedDocDetailError
+                ? selectedDocDetail?.items.map((item) => (
+                    <View key={item.id} style={styles.detailItemCard}>
+                      <Text style={styles.detailItemName}>{item.product_name_snapshot}</Text>
+                      <Text style={styles.detailItemMeta}>Cantidad: {item.qty_received}</Text>
+                      <Text style={styles.detailItemMeta}>
+                        SKU: {item.sku_snapshot || 'N/A'} · Código: {item.barcode_snapshot || 'N/A'}
+                      </Text>
+                      <Text style={styles.detailItemMeta}>
+                        Venta: ${Number(item.unit_price_snapshot || 0).toLocaleString('es-CO')} · Costo: $
+                        {Number(item.unit_cost_snapshot || 0).toLocaleString('es-CO')}
+                      </Text>
+                      {item.notes ? <Text style={styles.detailItemMeta}>Nota: {item.notes}</Text> : null}
+                    </View>
+                  ))
+                : null}
+            </View>
+          </ScrollView>
+        </>
+      ) : (
+        <>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Historial</Text>
         <Pressable style={styles.refreshButton} onPress={load}>
@@ -318,64 +442,8 @@ export function HistoryScreen() {
               </View>
             ))}
       </ScrollView>
-
-      <Modal
-        visible={!!selectedDoc}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setSelectedDoc(null)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            {selectedDoc ? (
-              <>
-                <Text style={styles.modalTitle}>{selectedDoc.lot_number}</Text>
-                <Text style={styles.modalMeta}>Estado: Cerrado</Text>
-                <Text style={styles.modalMeta}>Tipo: {formatPurchaseType(selectedDoc.purchase_type)}</Text>
-                <Text style={styles.modalMeta}>Origen: {selectedDoc.origin_name}</Text>
-                <Text style={styles.modalMeta}>Líneas: {selectedDoc.lines_count}</Text>
-                <Text style={styles.modalMeta}>Unidades: {selectedDoc.units_total}</Text>
-                <Text style={styles.modalMeta}>Cerrado: {formatDateTime(selectedDoc.closed_at)}</Text>
-                {selectedDoc.closed_by_user_name ? (
-                  <Text style={styles.modalMeta}>Responsable: {selectedDoc.closed_by_user_name}</Text>
-                ) : null}
-                {selectedDoc.supplier_name ? (
-                  <Text style={styles.modalMeta}>Proveedor: {selectedDoc.supplier_name}</Text>
-                ) : null}
-                {selectedDoc.invoice_reference ? (
-                  <Text style={styles.modalMeta}>Referencia factura: {selectedDoc.invoice_reference}</Text>
-                ) : null}
-                {selectedDoc.notes ? (
-                  <Text style={styles.modalMeta}>Observación: {selectedDoc.notes}</Text>
-                ) : null}
-
-                {selectedDoc.support_file_name ? (
-                  <View style={styles.supportBox}>
-                    <Text style={styles.supportTitle}>Soporte adjunto</Text>
-                    <Text style={styles.supportMeta}>{selectedDoc.support_file_name}</Text>
-                    {selectedSupportFileUrl ? (
-                      <Pressable
-                        style={styles.downloadButton}
-                        onPress={() => {
-                          Linking.openURL(selectedSupportFileUrl).catch(() => undefined);
-                        }}
-                      >
-                        <Text style={styles.downloadButtonText}>Abrir soporte</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                ) : null}
-              </>
-            ) : null}
-
-            <View style={styles.modalActions}>
-              <Pressable style={styles.modalCloseBtn} onPress={() => setSelectedDoc(null)}>
-                <Text style={styles.modalCloseBtnText}>Cerrar</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        </>
+      )}
     </ScreenContainer>
   );
 }
@@ -437,6 +505,10 @@ const styles = StyleSheet.create({
   },
   listScroll: {
     flex: 1,
+  },
+  detailScreenContent: {
+    gap: 8,
+    paddingBottom: 12,
   },
   card: {
     backgroundColor: '#CFD8E3',
@@ -534,19 +606,13 @@ const styles = StyleSheet.create({
   rangeBtnTextActive: {
     color: '#0A8F5A',
   },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  modalCard: {
+  detailHeaderCard: {
     backgroundColor: '#F8FAFC',
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#CBD5E1',
-    padding: 14,
-    gap: 6,
+    padding: 12,
+    gap: 4,
   },
   modalTitle: {
     color: '#0F172A',
@@ -558,7 +624,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   supportBox: {
-    marginTop: 6,
     backgroundColor: '#E2E8F0',
     borderWidth: 1,
     borderColor: '#B7C4D5',
@@ -590,21 +655,37 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
   },
-  modalActions: {
-    marginTop: 8,
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+  detailSection: {
+    gap: 8,
   },
-  modalCloseBtn: {
+  detailSectionTitle: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  detailErrorText: {
+    color: '#be123c',
+    fontSize: 13,
+  },
+  detailEmptyText: {
+    color: '#475569',
+    fontSize: 13,
+  },
+  detailItemCard: {
+    backgroundColor: '#E2E8F0',
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
+    padding: 10,
+    gap: 2,
   },
-  modalCloseBtnText: {
-    color: '#334155',
+  detailItemName: {
+    color: '#0F172A',
+    fontSize: 14,
     fontWeight: '700',
+  },
+  detailItemMeta: {
+    color: '#334155',
+    fontSize: 12,
   },
 });
