@@ -209,10 +209,27 @@ export function HistoryScreen() {
   }, [apiClient, selectedDoc]);
 
   const selectedSupportFileUrl = useMemo(() => {
+    const lotId = selectedDoc?.id;
+    const hasSupport = Boolean(
+      selectedDocDetail?.lot.support_file_name ||
+      selectedDocDetail?.lot.support_file_url ||
+      selectedDoc?.support_file_name ||
+      selectedDoc?.support_file_url
+    );
+    if (lotId && hasSupport) {
+      return `${apiBase.replace(/\/$/, '')}/receiving/lots/${lotId}/support-file`;
+    }
     const supportUrl =
       selectedDocDetail?.lot.support_file_url ?? selectedDoc?.support_file_url;
     return resolveReceivingSupportUrl(supportUrl, apiBase);
-  }, [selectedDoc?.support_file_url, selectedDocDetail?.lot.support_file_url, apiBase]);
+  }, [
+    selectedDoc?.id,
+    selectedDoc?.support_file_name,
+    selectedDoc?.support_file_url,
+    selectedDocDetail?.lot.support_file_name,
+    selectedDocDetail?.lot.support_file_url,
+    apiBase,
+  ]);
   const selectedDocNotes =
     selectedDocDetail?.lot.notes?.trim() || selectedDoc?.notes?.trim() || '';
 
