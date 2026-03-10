@@ -178,14 +178,14 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
 
   const loginWithPin = useCallback(async (pin: string, email?: string): Promise<void> => {
     const cleanedStation = stationId.trim();
-    if (!cleanedStation) {
-      throw new ApiError('Configura una estación válida.', 400);
-    }
     const normalizedEmail = (email ?? tabletEmail).trim().toLowerCase();
+    if (!normalizedEmail) {
+      throw new ApiError('Primero valida un correo de usuario.', 400);
+    }
     const payload = await tabletLogin(apiClient, {
-      station_id: cleanedStation,
+      station_id: cleanedStation || undefined,
       pin,
-      email: normalizedEmail || undefined,
+      email: normalizedEmail,
     });
     const authToken = payload.access_token ?? payload.token;
     if (!authToken) {

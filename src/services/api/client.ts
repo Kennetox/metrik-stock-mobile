@@ -13,6 +13,37 @@ export class ApiError extends Error {
   }
 }
 
+function toApiDetailMessage(detail: unknown, status: number): string {
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail.trim();
+  }
+  if (Array.isArray(detail)) {
+    const firstMessage = detail.find(
+      (entry) =>
+        entry &&
+        typeof entry === 'object' &&
+        'msg' in entry &&
+        typeof (entry as { msg?: unknown }).msg === 'string',
+    ) as { msg: string } | undefined;
+    if (firstMessage?.msg?.trim()) {
+      return firstMessage.msg.trim();
+    }
+  }
+  if (detail && typeof detail === 'object') {
+    const obj = detail as { message?: unknown; error?: unknown; detail?: unknown };
+    if (typeof obj.message === 'string' && obj.message.trim()) {
+      return obj.message.trim();
+    }
+    if (typeof obj.error === 'string' && obj.error.trim()) {
+      return obj.error.trim();
+    }
+    if (typeof obj.detail === 'string' && obj.detail.trim()) {
+      return obj.detail.trim();
+    }
+  }
+  return `Error ${status}`;
+}
+
 export function createApiClient(config: ApiClientConfig) {
   async function request<T>(
     path: string,
@@ -43,7 +74,7 @@ export function createApiClient(config: ApiClientConfig) {
       if (res.status === 401 && token) {
         config.onUnauthorized?.();
       }
-      throw new ApiError(detail ?? `Error ${res.status}`, res.status);
+      throw new ApiError(toApiDetailMessage(detail, res.status), res.status);
     }
 
     if (res.status === 204) {

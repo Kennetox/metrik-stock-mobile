@@ -78,7 +78,10 @@ export function LoginScreen() {
     }
     setValidatingEmail(true);
     try {
-      const response = await tabletEmailCheck(apiClient, { email: normalizedEmail });
+      const response = await tabletEmailCheck(apiClient, {
+        station_id: stationId.trim() || undefined,
+        email: normalizedEmail,
+      });
       if (!response?.exists) {
         ToastAndroid.show('Correo no encontrado', ToastAndroid.SHORT);
         return;
