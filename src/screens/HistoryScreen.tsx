@@ -143,7 +143,7 @@ export function HistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [range, setRange] = useState<'today' | '7d' | '30d' | 'all'>('30d');
+  const [range, setRange] = useState<'today' | '7d' | '30d'>('30d');
   const [selectedDoc, setSelectedDoc] = useState<ReceivingDocument | null>(null);
   const [selectedDocDetail, setSelectedDocDetail] = useState<ReceivingLotDetail | null>(null);
   const [loadingSelectedDocDetail, setLoadingSelectedDocDetail] = useState(false);
@@ -155,7 +155,6 @@ export function HistoryScreen() {
   const [previewVisible, setPreviewVisible] = useState(false);
 
   const computeDateRange = useCallback(() => {
-    if (range === 'all') return {};
     const endYmd = getBogotaYmd(new Date());
     const startYmd =
       range === 'today' ? endYmd : shiftBogotaYmd(endYmd, range === '7d' ? -6 : -29);
@@ -692,14 +691,6 @@ export function HistoryScreen() {
                     >
                       <Text style={[styles.rangeBtnText, range === '30d' ? styles.rangeBtnTextActive : null]}>
                         30 días
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      style={[styles.rangeBtn, range === 'all' ? styles.rangeBtnActive : null]}
-                      onPress={() => setRange('all')}
-                    >
-                      <Text style={[styles.rangeBtnText, range === 'all' ? styles.rangeBtnTextActive : null]}>
-                        Todo
                       </Text>
                     </Pressable>
                   </View>

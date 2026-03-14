@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { Camera, type Code, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera';
@@ -61,6 +62,13 @@ function statusLabel(status: RecountStatus) {
 
 function normalizeBarcode(value?: string | null): string {
   return (value ?? '').replace(/\s+/g, '').trim().toLowerCase();
+}
+
+function belongsToStockDevice(stockDeviceId: string, candidate?: string | null): boolean {
+  const current = stockDeviceId.trim();
+  const recountDevice = (candidate || '').trim();
+  if (!current || !recountDevice) return false;
+  return current === recountDevice;
 }
 
 function findLineByCode(lines: RecountLine[], rawCode: string): RecountLine | null {
@@ -152,11 +160,12 @@ export function RecountsScreen({
     }
     try {
       const page = await listRecounts(apiClient, { source: 'app', skip: 0, limit: 50 });
-      setDocs(page.items);
+      const filtered = page.items.filter((doc) => belongsToStockDevice(stockDeviceId, doc.stock_device_id));
+      setDocs(filtered);
       setSelectedId((prev) => {
-        if (page.items.length === 0) return null;
-        if (prev != null && page.items.some((doc) => doc.id === prev)) return prev;
-        return page.items[0].id;
+        if (filtered.length === 0) return null;
+        if (prev != null && filtered.some((doc) => doc.id === prev)) return prev;
+        return filtered[0].id;
       });
     } catch (err) {
       if (!silent) {
@@ -168,7 +177,7 @@ export function RecountsScreen({
         setLoadingDocs(false);
       }
     }
-  }, [apiClient]);
+  }, [apiClient, stockDeviceId]);
 
   const loadDetail = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -401,16 +410,16 @@ export function RecountsScreen({
         const normalizedNoZeros = normalizedScanned.replace(/^0+/, '');
         const picked = products.find((item) => {
           const barcode = normalizeBarcode(item.barcode);
-          const sku = normalizeBarcode(item.sku);
           return (
             barcode === normalizedScanned ||
-            barcode.replace(/^0+/, '') === normalizedNoZeros ||
-            sku === normalizedScanned
+            barcode.replace(/^0+/, '') === normalizedNoZeros
           );
-        }) ?? products[0];
+        });
 
         if (!picked) {
-          setError(`No se encontró producto para el código ${rawCode}.`);
+          const message = `No se encontró producto para el código de barras ${rawCode}.`;
+          ToastAndroid.show('No se encontró producto para ese código de barras.', ToastAndroid.SHORT);
+          setError(message);
           return;
         }
 
@@ -889,18 +898,12 @@ export function RecountsScreen({
             <View style={styles.listCard}>
               <Text style={styles.cardTitle}>Último recuento completado</Text>
               <View style={styles.docItem}>
-                <Pressable
-                  style={styles.docMainPressable}
-                  onPress={() => {
-                    setSelectedId(latestCompletedDoc.id);
-                    setWorkspaceOpen(true);
-                  }}
-                >
+                <View style={styles.docMainPressable}>
                   <Text style={styles.docTitle}>{latestCompletedDoc.code}</Text>
                   <Text style={styles.docMeta}>
                     Aplicado · {latestCompletedDoc.summary.counted_lines}/{latestCompletedDoc.summary.total_lines} líneas
                   </Text>
-                </Pressable>
+                </View>
               </View>
             </View>
           ) : null}

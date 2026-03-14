@@ -29,16 +29,11 @@ type SupportDraftFile = {
   type: string;
 };
 
-function isAppReceivingLot(lot: ReceivingLot): boolean {
-  const deviceId = (lot.stock_device_id || '').trim();
-  if (deviceId) {
-    return true;
-  }
-  const origin = (lot.origin_name || '').trim().toLowerCase();
-  if (!origin) {
-    return false;
-  }
-  return !origin.includes('web') && !origin.includes('metrik');
+function belongsToStockDevice(stockDeviceId: string, candidate?: string | null): boolean {
+  const current = stockDeviceId.trim();
+  const lotDevice = (candidate || '').trim();
+  if (!current || !lotDevice) return false;
+  return current === lotDevice;
 }
 
 export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }) {
@@ -79,14 +74,21 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
     try {
       const [openLots, closedLots] = await Promise.all([
         listLots(apiClient, { status: 'open', limit: 50, skip: 0 }),
-        listLots(apiClient, { status: 'closed', limit: 1, skip: 0 }),
+        listLots(apiClient, { status: 'closed', limit: 50, skip: 0 }),
       ]);
-      setLots(openLots.items.filter(isAppReceivingLot));
-      setLatestClosedLot(closedLots.items[0] ?? null);
+      const filteredOpenLots = openLots.items.filter((lot) =>
+        belongsToStockDevice(stockDeviceId, lot.stock_device_id),
+      );
+      const filteredClosedLots = closedLots.items
+        .filter((lot) => belongsToStockDevice(stockDeviceId, lot.stock_device_id))
+        .sort((a, b) => (b.closed_at || b.created_at || '').localeCompare(a.closed_at || a.created_at || ''));
+
+      setLots(filteredOpenLots);
+      setLatestClosedLot(filteredClosedLots[0] ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron cargar lotes');
     }
-  }, [apiClient]);
+  }, [apiClient, stockDeviceId]);
 
   useEffect(() => {
     let active = true;
