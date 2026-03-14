@@ -6,10 +6,12 @@ import { ScreenContainer } from '../ui/ScreenContainer';
 
 export function SettingsScreen() {
   const {
-    apiBase,
-    setApiBase,
     stationId,
     setStationId,
+    stationLabel,
+    setStationLabel,
+    stockDeviceId,
+    isInitialSetupComplete,
     printerDirectUrl,
     setPrinterDirectUrl,
     printerAgentUrl,
@@ -21,25 +23,34 @@ export function SettingsScreen() {
   return (
     <ScreenContainer backgroundColor="#E9EDF3">
       <Text style={styles.title}>Configuración</Text>
-      <Text style={styles.subtitle}>Parámetros de API e impresión</Text>
+      <Text style={styles.subtitle}>Parámetros del dispositivo e impresión</Text>
 
       <View style={styles.card}>
-        <Text style={styles.label}>API Base</Text>
-        <TextInput
-          value={apiBase}
-          onChangeText={setApiBase}
-          style={styles.input}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-
-        <Text style={styles.label}>ID estación tablet</Text>
+        <Text style={styles.label}>ID local del dispositivo</Text>
         <TextInput
           value={stationId}
           onChangeText={setStationId}
           style={styles.input}
           autoCapitalize="characters"
           autoCorrect={false}
+          editable={!isInitialSetupComplete}
+        />
+
+        <Text style={styles.label}>Nombre del dispositivo de inventario</Text>
+        <TextInput
+          value={stationLabel}
+          onChangeText={setStationLabel}
+          style={styles.input}
+          autoCapitalize="sentences"
+          autoCorrect={false}
+          editable={!isInitialSetupComplete}
+        />
+
+        <Text style={styles.label}>ID sistema del dispositivo</Text>
+        <TextInput
+          value={stockDeviceId || 'Sin registrar aún'}
+          style={[styles.input, styles.inputReadonly]}
+          editable={false}
         />
 
         <Text style={styles.label}>Impresión directa SATO URL</Text>
@@ -104,5 +115,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: '#0F172A',
+  },
+  inputReadonly: {
+    color: '#64748B',
   },
 });

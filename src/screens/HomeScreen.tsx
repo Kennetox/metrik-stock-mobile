@@ -3,15 +3,16 @@ import { ActivityIndicator, Alert, Image, Modal, Pressable, ScrollView, StyleShe
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 
-import { SOP_RECEPCION_TABLET_V1 } from '../assets/sop/sopRecepcionTabletV1';
+import { SOP_OPERATIVO_TABLET_V2 } from '../assets/sop/sopOperativoTabletV2';
 import { useAppSession } from '../contexts/AppSessionContext';
 import { getAppInfoNative, hasNativePrintAgent, printHtmlNative } from '../services/printing/mobilePrintAgent';
 import { HistoryScreen } from './HistoryScreen';
 import { LabelsScreen } from './LabelsScreen';
 import { LotDetailScreen } from './LotDetailScreen';
 import { LotsScreen } from './LotsScreen';
+import { RecountsScreen } from './RecountsScreen';
 
-type TabKey = 'lots' | 'labels' | 'history' | 'profile';
+type TabKey = 'lots' | 'recounts' | 'labels' | 'history' | 'profile';
 
 const COLORS = {
   pageBg: '#E9EDF3',
@@ -48,25 +49,31 @@ export function HomeScreen() {
     refreshSyncStatus,
     stationId,
     stationLabel,
-    apiBase,
+    stockDeviceId,
     printerDirectUrl,
     labelFormat,
   } = useAppSession();
   const [tab, setTab] = useState<TabKey>('lots');
   const [visitedTabs, setVisitedTabs] = useState<Record<TabKey, boolean>>({
     lots: true,
+    recounts: false,
     labels: false,
     history: false,
     profile: false,
   });
   const [selectedLotId, setSelectedLotId] = useState<number | null>(null);
+  const [recountWorkspaceOpen, setRecountWorkspaceOpen] = useState(false);
+  const [recountBackSignal, setRecountBackSignal] = useState(0);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [refreshingSync, setRefreshingSync] = useState(false);
   const inLotWorkspace = selectedLotId !== null;
+  const inRecountWorkspace = tab === 'recounts' && recountWorkspaceOpen;
+  const hideBottomNav = inLotWorkspace || inRecountWorkspace;
+  const showTopBackButton = inLotWorkspace || inRecountWorkspace;
   const bottomInset = Math.max(insets.bottom, 10);
   const topInset = Math.max(insets.top, 8);
   const navReservedSpace = 84 + bottomInset;
-  const contentBottomPadding = inLotWorkspace ? 12 + bottomInset : navReservedSpace;
+  const contentBottomPadding = hideBottomNav ? 12 + bottomInset : navReservedSpace;
 
   const syncMeta = getSyncMeta(syncStatus);
   const lastSyncText = lastSyncAt ? formatDateTime(lastSyncAt) : 'Sin sincronización confirmada';
@@ -90,10 +97,18 @@ export function HomeScreen() {
     <View style={styles.container}>
       <View style={[styles.topBar, { paddingTop: topInset + 6 }]}>
         <View style={styles.brandRow}>
-          {inLotWorkspace ? (
+          {showTopBackButton ? (
             <Pressable
               style={styles.topBackButton}
-              onPress={() => setSelectedLotId(null)}
+              onPress={() => {
+                if (inLotWorkspace) {
+                  setSelectedLotId(null);
+                  return;
+                }
+                if (inRecountWorkspace) {
+                  setRecountBackSignal((prev) => prev + 1);
+                }
+              }}
               hitSlop={8}
             >
               <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
@@ -114,7 +129,7 @@ export function HomeScreen() {
           <Pressable style={styles.syncChip} onPress={() => setShowSyncModal(true)}>
             <View style={[styles.syncDot, { backgroundColor: syncMeta.color }]} />
           </Pressable>
-          {!inLotWorkspace ? (
+          {!showTopBackButton ? (
             <Text style={styles.topMeta} numberOfLines={1} ellipsizeMode="tail">
               {user?.name ?? 'Usuario'}
             </Text>
@@ -122,7 +137,7 @@ export function HomeScreen() {
         </View>
       </View>
 
-      <View style={[styles.content, { paddingBottom: contentBottomPadding }, inLotWorkspace ? styles.contentNoNav : null]}>
+      <View style={[styles.content, { paddingBottom: contentBottomPadding }, hideBottomNav ? styles.contentNoNav : null]}>
         {visitedTabs.lots ? (
           <View style={[styles.tabScene, tab === 'lots' ? null : styles.tabSceneHidden]}>
             {selectedLotId ? (
@@ -143,6 +158,15 @@ export function HomeScreen() {
           </View>
         ) : null}
 
+        {visitedTabs.recounts ? (
+          <View style={[styles.tabScene, tab === 'recounts' ? null : styles.tabSceneHidden]}>
+            <RecountsScreen
+              onWorkspaceChange={setRecountWorkspaceOpen}
+              backSignal={recountBackSignal}
+            />
+          </View>
+        ) : null}
+
         {visitedTabs.history ? (
           <View style={[styles.tabScene, tab === 'history' ? null : styles.tabSceneHidden]}>
             <HistoryScreen />
@@ -157,7 +181,7 @@ export function HomeScreen() {
               userRole={user?.role ?? null}
               stationId={stationId}
               stationLabel={stationLabel}
-              apiBase={apiBase}
+              stockDeviceId={stockDeviceId}
               printerDirectUrl={printerDirectUrl}
               labelFormat={labelFormat}
               syncLabel={syncMeta.label}
@@ -173,10 +197,11 @@ export function HomeScreen() {
         ) : null}
       </View>
 
-      {!inLotWorkspace ? (
+      {!hideBottomNav ? (
         <View style={[styles.bottomNavWrap, { paddingBottom: bottomInset }]}>
           <View style={styles.bottomNav}>
             <BottomTabButton icon="home" active={tab === 'lots'} onPress={() => handleSelectTab('lots')} />
+            <BottomTabButton icon="count" active={tab === 'recounts'} onPress={() => handleSelectTab('recounts')} />
             <BottomTabButton icon="tag" active={tab === 'labels'} onPress={() => handleSelectTab('labels')} />
             <BottomTabButton icon="report" active={tab === 'history'} onPress={() => handleSelectTab('history')} />
             <BottomTabButton icon="profile" active={tab === 'profile'} onPress={() => handleSelectTab('profile')} />
@@ -277,7 +302,7 @@ function buildSopHtml(content: string): string {
     </style>
   </head>
   <body>
-    <h1>SOP Operativo - Recepción en Tablet</h1>
+    <h1>SOP Operativo - Metrik Stock Tablet</h1>
     <pre>${safe}</pre>
   </body>
 </html>`;
@@ -288,7 +313,7 @@ function BottomTabButton({
   active,
   onPress,
 }: {
-  icon: 'home' | 'tag' | 'report' | 'profile';
+  icon: 'home' | 'count' | 'tag' | 'report' | 'profile';
   active: boolean;
   onPress: () => void;
 }) {
@@ -303,7 +328,7 @@ function BottomTabButton({
   );
 }
 
-function NavIcon({ name, color }: { name: 'home' | 'tag' | 'report' | 'profile'; color: string }) {
+function NavIcon({ name, color }: { name: 'home' | 'count' | 'tag' | 'report' | 'profile'; color: string }) {
   const strokeWidth = 1.9;
 
   if (name === 'home') {
@@ -335,6 +360,22 @@ function NavIcon({ name, color }: { name: 'home' | 'tag' | 'report' | 'profile';
           stroke={color}
           strokeWidth={1.6}
         />
+      </Svg>
+    );
+  }
+
+  if (name === 'count') {
+    return (
+      <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+        <Path
+          d="M6 4.8H18C19.1 4.8 20 5.7 20 6.8V17.2C20 18.3 19.1 19.2 18 19.2H6C4.9 19.2 4 18.3 4 17.2V6.8C4 5.7 4.9 4.8 6 4.8Z"
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeLinejoin="round"
+        />
+        <Path d="M8 9H16" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+        <Path d="M8 12H16" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+        <Path d="M8 15H12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
       </Svg>
     );
   }
@@ -377,7 +418,7 @@ function ProfilePanel({
   userRole,
   stationId,
   stationLabel,
-  apiBase,
+  stockDeviceId,
   printerDirectUrl,
   labelFormat,
   syncLabel,
@@ -394,7 +435,7 @@ function ProfilePanel({
   userRole: string | null;
   stationId: string;
   stationLabel: string;
-  apiBase: string;
+  stockDeviceId: string;
   printerDirectUrl: string;
   labelFormat: string;
   syncLabel: string;
@@ -409,7 +450,7 @@ function ProfilePanel({
   const [showSopModal, setShowSopModal] = useState(false);
   const [savingSopPdf, setSavingSopPdf] = useState(false);
   const [appBuildLabel, setAppBuildLabel] = useState('Versión no disponible');
-  const sopText = SOP_RECEPCION_TABLET_V1.trim();
+  const sopText = SOP_OPERATIVO_TABLET_V2.trim();
 
   useEffect(() => {
     let active = true;
@@ -438,7 +479,7 @@ function ProfilePanel({
     }
     setSavingSopPdf(true);
     try {
-      await printHtmlNative('SOP-Metrik-Stock-v1', buildSopHtml(sopText));
+      await printHtmlNative('SOP-Metrik-Stock-v2', buildSopHtml(sopText));
       Alert.alert('Listo', 'Se abrió el diálogo para imprimir o guardar en PDF.');
     } catch (err: unknown) {
       const detail = err instanceof Error ? err.message : 'No se pudo abrir guardar PDF.';
@@ -463,9 +504,10 @@ function ProfilePanel({
         </View>
 
         <View style={styles.profileCard}>
-          <Text style={styles.profileTitle}>Estación</Text>
-          <Text style={styles.profileLine}>ID: {stationId}</Text>
+          <Text style={styles.profileTitle}>Dispositivo inventario</Text>
+          <Text style={styles.profileLine}>ID local: {stationId}</Text>
           <Text style={styles.profileLine}>Nombre: {stationLabel}</Text>
+          <Text style={styles.profileLine}>ID sistema: {stockDeviceId || 'Sin registrar aún'}</Text>
         </View>
 
         <View style={styles.profileCard}>
@@ -495,16 +537,9 @@ function ProfilePanel({
         </View>
 
         <View style={styles.profileCard}>
-          <Text style={styles.profileTitle}>API</Text>
-          <Text style={styles.profileLineSmall} numberOfLines={1}>
-            {apiBase}
-          </Text>
-        </View>
-
-        <View style={styles.profileCard}>
           <Text style={styles.profileTitle}>SOP operativo</Text>
           <Text style={styles.profileLineSmall}>
-            Guía oficial de recepción en tablet (v1), disponible offline.
+            Guía oficial de operación en tablet (recepción + recuentos) v2, disponible offline.
           </Text>
           <View style={styles.profileActionRow}>
             <Pressable style={styles.profileSecondaryBtn} onPress={() => setShowSopModal(true)}>
@@ -535,7 +570,7 @@ function ProfilePanel({
       <Modal visible={showSopModal} transparent animationType="fade" onRequestClose={() => setShowSopModal(false)}>
         <View style={styles.sopModalBackdrop}>
           <View style={styles.sopModalCard}>
-            <Text style={styles.sopModalTitle}>SOP Recepción Tablet v1</Text>
+            <Text style={styles.sopModalTitle}>SOP Operativo Tablet v2</Text>
             <ScrollView style={styles.sopBodyWrap} contentContainerStyle={styles.sopBodyContent}>
               <Text style={styles.sopBodyText}>{sopText}</Text>
             </ScrollView>

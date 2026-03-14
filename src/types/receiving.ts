@@ -7,6 +7,8 @@ export type ReceivingLot = {
   status: ReceivingLotStatus;
   purchase_type: PurchaseType;
   origin_name: string;
+  stock_device_id?: string | null;
+  stock_device_name?: string | null;
   source_reference?: string | null;
   supplier_name?: string | null;
   invoice_reference?: string | null;
@@ -67,6 +69,8 @@ export type ReceivingDocument = {
   status: ReceivingLotStatus;
   purchase_type: PurchaseType;
   origin_name: string;
+  stock_device_id?: string | null;
+  stock_device_name?: string | null;
   lines_count: number;
   units_total: number;
   created_at: string;

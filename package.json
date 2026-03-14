@@ -1,6 +1,6 @@
 {
   "name": "kensar_mobile",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
@@ -17,7 +17,8 @@
     "react-native": "0.84.0",
     "react-native-image-picker": "^8.2.1",
     "react-native-safe-area-context": "^5.5.2",
-    "react-native-svg": "^15.12.0"
+    "react-native-svg": "^15.12.0",
+    "react-native-vision-camera": "^4.6.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

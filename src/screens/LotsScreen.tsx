@@ -29,8 +29,20 @@ type SupportDraftFile = {
   type: string;
 };
 
+function isAppReceivingLot(lot: ReceivingLot): boolean {
+  const deviceId = (lot.stock_device_id || '').trim();
+  if (deviceId) {
+    return true;
+  }
+  const origin = (lot.origin_name || '').trim().toLowerCase();
+  if (!origin) {
+    return false;
+  }
+  return !origin.includes('web') && !origin.includes('metrik');
+}
+
 export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }) {
-  const { apiClient, stationId, stationLabel } = useAppSession();
+  const { apiClient, stationId, stationLabel, stockDeviceId, syncStatus } = useAppSession();
   const [lots, setLots] = useState<ReceivingLot[]>([]);
   const [latestClosedLot, setLatestClosedLot] = useState<ReceivingLot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,6 +66,13 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   const [editSupportFile, setEditSupportFile] = useState<SupportDraftFile | null>(null);
   const [updatingLot, setUpdatingLot] = useState(false);
   const [cancellingLot, setCancellingLot] = useState(false);
+  const canMutate = syncStatus === 'online' || syncStatus === 'degraded';
+
+  function ensureCanMutate(): boolean {
+    if (canMutate) return true;
+    setError('Sin conexión con API. Revalida la conexión para continuar.');
+    return false;
+  }
 
   const load = useCallback(async () => {
     setError(null);
@@ -62,7 +81,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
         listLots(apiClient, { status: 'open', limit: 50, skip: 0 }),
         listLots(apiClient, { status: 'closed', limit: 1, skip: 0 }),
       ]);
-      setLots(openLots.items);
+      setLots(openLots.items.filter(isAppReceivingLot));
       setLatestClosedLot(closedLots.items[0] ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron cargar lotes');
@@ -83,6 +102,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   }, [load]);
 
   async function handleCreateLot() {
+    if (!ensureCanMutate()) return;
     setCreateType('cash');
     setCreateOrigin(stationLabel?.trim() || stationId || 'Recepción');
     setCreateSupplier('');
@@ -134,6 +154,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   }
 
   function selectSupportFile(target: 'create' | 'edit') {
+    if (!ensureCanMutate()) return;
     setError(null);
     Alert.alert('Adjuntar soporte', 'Elige el origen del archivo de soporte.', [
       { text: 'Cancelar', style: 'cancel' },
@@ -167,6 +188,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   }
 
   async function submitCreateLot() {
+    if (!ensureCanMutate()) return;
     const origin = createOrigin.trim();
     if (!origin) {
       setError('Debes indicar el origen del lote.');
@@ -187,6 +209,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
       const created = await createLot(apiClient, {
         purchase_type: createType,
         origin_name: origin,
+        stock_device_id: stockDeviceId || undefined,
         supplier_name: createType === 'invoice' ? createSupplier.trim() : undefined,
         invoice_reference: createType === 'invoice' ? createReference.trim() : undefined,
         source_reference: createType === 'invoice' ? createReference.trim() : undefined,
@@ -226,6 +249,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   }
 
   async function submitEditType() {
+    if (!ensureCanMutate()) return;
     if (!selectedLot) return;
     if (editType === 'invoice') {
       if (!editSupplier.trim()) {
@@ -267,6 +291,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   }
 
   async function submitCancelLot() {
+    if (!ensureCanMutate()) return;
     if (!selectedLot) return;
     setCancellingLot(true);
     setError(null);
@@ -287,13 +312,18 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
       <View style={styles.headerRow}>
         <Text style={styles.title}>Lotes abiertos</Text>
         <View style={styles.actions}>
-          <Pressable style={styles.button} onPress={handleCreateLot}>
+          <Pressable
+            style={[styles.button, !canMutate ? styles.buttonDisabled : null]}
+            onPress={handleCreateLot}
+            disabled={!canMutate}
+          >
             <Text style={styles.buttonText}>Nuevo lote</Text>
           </Pressable>
         </View>
       </View>
 
       {loading ? <ActivityIndicator color="#93c5fd" /> : null}
+      {!canMutate ? <Text style={styles.warning}>Sin conexión: edición y cierre de documentos bloqueados.</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       <View style={styles.list}>
@@ -408,11 +438,11 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
             />
 
             <Text style={styles.modalLabel}>Soporte (opcional)</Text>
-            <Pressable
-              style={styles.supportPickerButton}
-              onPress={() => selectSupportFile('create')}
-              disabled={creating}
-            >
+              <Pressable
+                style={styles.supportPickerButton}
+                onPress={() => selectSupportFile('create')}
+                disabled={creating || !canMutate}
+              >
               <Text style={styles.supportPickerButtonText}>
                 {createSupportFile ? 'Cambiar soporte' : 'Adjuntar soporte'}
               </Text>
@@ -432,7 +462,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
               >
                 <Text style={styles.cancelButtonText}>Cancelar</Text>
               </Pressable>
-              <Pressable style={styles.saveButton} onPress={submitCreateLot} disabled={creating}>
+              <Pressable style={styles.saveButton} onPress={submitCreateLot} disabled={creating || !canMutate}>
                 <Text style={styles.saveButtonText}>{creating ? 'Creando...' : 'Crear lote'}</Text>
               </Pressable>
             </View>
@@ -446,10 +476,18 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
             <Text style={styles.modalTitle}>Opciones del lote</Text>
             <Text style={styles.modalLabel}>{selectedLot?.lot_number ?? ''}</Text>
             <View style={styles.modalActionsStack}>
-              <Pressable style={styles.actionPrimaryButton} onPress={openEditTypeModal}>
+              <Pressable
+                style={[styles.actionPrimaryButton, !canMutate ? styles.buttonDisabled : null]}
+                onPress={openEditTypeModal}
+                disabled={!canMutate}
+              >
                 <Text style={styles.actionPrimaryText}>Editar tipo (Contado / Factura)</Text>
               </Pressable>
-              <Pressable style={styles.actionDangerButton} onPress={openCancelConfirm}>
+              <Pressable
+                style={[styles.actionDangerButton, !canMutate ? styles.buttonDisabled : null]}
+                onPress={openCancelConfirm}
+                disabled={!canMutate}
+              >
                 <Text style={styles.actionDangerText}>Cancelar recepción</Text>
               </Pressable>
               <Pressable style={styles.cancelButton} onPress={closeLotActions}>
@@ -525,7 +563,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
             <Pressable
               style={styles.supportPickerButton}
               onPress={() => selectSupportFile('edit')}
-              disabled={updatingLot}
+              disabled={updatingLot || !canMutate}
             >
               <Text style={styles.supportPickerButtonText}>
                 {editSupportFile ? 'Cambiar soporte' : 'Adjuntar soporte'}
@@ -547,7 +585,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
               >
                 <Text style={styles.cancelButtonText}>Cancelar</Text>
               </Pressable>
-              <Pressable style={styles.saveButton} onPress={submitEditType} disabled={updatingLot}>
+              <Pressable style={styles.saveButton} onPress={submitEditType} disabled={updatingLot || !canMutate}>
                 <Text style={styles.saveButtonText}>{updatingLot ? 'Guardando...' : 'Guardar'}</Text>
               </Pressable>
             </View>
@@ -574,7 +612,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
               <Pressable style={styles.cancelButton} onPress={() => setShowCancelConfirmModal(false)} disabled={cancellingLot}>
                 <Text style={styles.cancelButtonText}>Volver</Text>
               </Pressable>
-              <Pressable style={styles.actionDangerButton} onPress={submitCancelLot} disabled={cancellingLot}>
+              <Pressable style={styles.actionDangerButton} onPress={submitCancelLot} disabled={cancellingLot || !canMutate}>
                 <Text style={styles.actionDangerText}>{cancellingLot ? 'Cancelando...' : 'Sí, cancelar'}</Text>
               </Pressable>
             </View>
@@ -618,6 +656,9 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#F8FAFC',
     fontWeight: '700',
+  },
+  buttonDisabled: {
+    opacity: 0.55,
   },
   list: {
     gap: 10,
@@ -665,6 +706,16 @@ const styles = StyleSheet.create({
   },
   error: {
     color: '#fda4af',
+  },
+  warning: {
+    color: '#92400E',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
   },
   empty: {
     color: '#475569',

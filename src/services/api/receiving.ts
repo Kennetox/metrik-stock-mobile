@@ -11,6 +11,7 @@ import type { ReturnTypeCreateApiClient } from './types';
 export type CreateLotPayload = {
   purchase_type: PurchaseType;
   origin_name: string;
+  stock_device_id?: string;
   source_reference?: string;
   supplier_name?: string;
   invoice_reference?: string;
@@ -104,6 +105,7 @@ export async function updateReceivingLot(
   lotId: number,
   payload: {
     purchase_type: PurchaseType;
+    stock_device_id?: string;
     source_reference?: string;
     supplier_name?: string;
     invoice_reference?: string;

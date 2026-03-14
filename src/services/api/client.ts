@@ -2,6 +2,7 @@ export type ApiClientConfig = {
   getBaseUrl: () => string;
   getToken: () => string | null;
   onUnauthorized?: () => void;
+  onDeviceBlocked?: (reason?: string) => void;
 };
 
 export class ApiError extends Error {
@@ -44,6 +45,28 @@ function toApiDetailMessage(detail: unknown, status: number): string {
   return `Error ${status}`;
 }
 
+function normalizeForMatch(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function isDeviceBlockedMessage(status: number, message: string): boolean {
+  if (status !== 422 && status !== 403) return false;
+  const normalized = normalizeForMatch(message);
+  if (!normalized.includes('dispositivo de inventario')) return false;
+  return normalized.includes('inactivo') || normalized.includes('no existe');
+}
+
+function getApiDetailCode(detail: unknown): string | null {
+  if (!detail || typeof detail !== 'object') return null;
+  const code = (detail as { code?: unknown }).code;
+  if (typeof code !== 'string' || !code.trim()) return null;
+  return code.trim().toUpperCase();
+}
+
 export function createApiClient(config: ApiClientConfig) {
   async function request<T>(
     path: string,
@@ -71,10 +94,17 @@ export function createApiClient(config: ApiClientConfig) {
         .json()
         .then((payload) => payload?.detail)
         .catch(() => null);
+      const message = toApiDetailMessage(detail, res.status);
+      const detailCode = getApiDetailCode(detail);
       if (res.status === 401 && token) {
         config.onUnauthorized?.();
       }
-      throw new ApiError(toApiDetailMessage(detail, res.status), res.status);
+      const isDeviceBlockedCode =
+        detailCode === 'DEVICE_BLOCKED' || detailCode === 'DEVICE_NOT_ALLOWED';
+      if (token && (isDeviceBlockedCode || isDeviceBlockedMessage(res.status, message))) {
+        config.onDeviceBlocked?.(message);
+      }
+      throw new ApiError(message, res.status);
     }
 
     if (res.status === 204) {

@@ -196,7 +196,7 @@ export function LotDetailScreen({
   onBack: () => void;
   showInlineHeader?: boolean;
 }) {
-  const { apiClient, printerDirectUrl, labelFormat } = useAppSession();
+  const { apiClient, printerDirectUrl, labelFormat, syncStatus } = useAppSession();
   const [detail, setDetail] = useState<ReceivingLotDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -230,7 +230,15 @@ export function LotDetailScreen({
   const [groupSearch, setGroupSearch] = useState('');
   const [selectedGroupPath, setSelectedGroupPath] = useState('');
   const [selectedGroupLabel, setSelectedGroupLabel] = useState('');
+  const [createProductError, setCreateProductError] = useState<string | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const canMutate = syncStatus === 'online' || syncStatus === 'degraded';
+
+  function ensureCanMutate(): boolean {
+    if (canMutate) return true;
+    setError('Sin conexión con API. Revalida la conexión para continuar.');
+    return false;
+  }
 
   const loadDetail = useCallback(async () => {
     setError(null);
@@ -429,6 +437,7 @@ export function LotDetailScreen({
   }, [addMode, apiClient, productQuery]);
 
   function openAddMode() {
+    if (!ensureCanMutate()) return;
     setError(null);
     setProductQuery('');
     setRawResults([]);
@@ -447,7 +456,9 @@ export function LotDetailScreen({
   }
 
   async function openCreateProductModal() {
+    if (!ensureCanMutate()) return;
     setError(null);
+    setCreateProductError(null);
     setNewProductName(productQuery.trim());
     setPreviewSku('');
     setPreviewBarcode('');
@@ -469,11 +480,12 @@ export function LotDetailScreen({
       setPreviewBarcode(codes.barcode);
       setProductGroups(groups);
     } catch (err) {
-      setError(
+      const message =
         err instanceof Error
           ? err.message
-          : 'No se pudo validar conexión para generar SKU y código de barras',
-      );
+          : 'No se pudo validar conexión para generar SKU y código de barras';
+      setError(message);
+      setCreateProductError(message);
     } finally {
       setLoadingProductCodes(false);
       setLoadingProductGroups(false);
@@ -484,9 +496,11 @@ export function LotDetailScreen({
     setShowCreateProductModal(false);
     setCreatingProduct(false);
     setLoadingProductCodes(false);
+    setCreateProductError(null);
   }
 
   async function handleAddItem() {
+    if (!ensureCanMutate()) return;
     if (!selectedProduct) {
       setError('Selecciona un producto para agregar.');
       return;
@@ -514,29 +528,37 @@ export function LotDetailScreen({
   }
 
   async function handleCreateAndAddProduct() {
+    if (!ensureCanMutate()) return;
     const name = newProductName.trim();
     const price = parseMoneyInput(newProductPrice);
-    const cost = newProductCost.trim() ? parseMoneyInput(newProductCost) : undefined;
+    const hasCostInput = newProductCost.trim().length > 0;
+    const cost = hasCostInput ? parseMoneyInput(newProductCost) : 0;
     const qty = Number(newProductQty);
+    setCreateProductError(null);
 
     if (!name) {
-      setError('El nombre del producto es obligatorio.');
+      setCreateProductError('El nombre del producto es obligatorio.');
       return;
     }
     if (!Number.isFinite(price) || price <= 0) {
-      setError('El precio de venta debe ser mayor a 0.');
+      setCreateProductError('El precio de venta debe ser mayor a 0.');
       return;
     }
-    if (cost !== undefined && (!Number.isFinite(cost) || cost < 0)) {
-      setError('El costo debe ser 0 o mayor.');
+    if (!Number.isFinite(cost) || cost < 0) {
+      setCreateProductError('El costo debe ser 0 o mayor.');
+      return;
+    }
+    if (cost > price) {
+      setCreateProductError('El costo no puede ser mayor al precio de venta. Revisa los valores e intenta de nuevo.');
       return;
     }
     if (!Number.isFinite(qty) || qty <= 0) {
-      setError('La cantidad debe ser mayor a 0.');
+      setCreateProductError('La cantidad debe ser mayor a 0.');
       return;
     }
     if (!selectedGroupPath.trim()) {
-      setError('Debes seleccionar un grupo existente.');
+      setCreateProductError('Debes seleccionar un grupo existente.');
+      setShowGroupPicker(true);
       return;
     }
 
@@ -557,7 +579,7 @@ export function LotDetailScreen({
       closeCreateProductModal();
       closeAddMode();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo crear/agregar el producto');
+      setCreateProductError(err instanceof Error ? err.message : 'No se pudo crear/agregar el producto');
       setCreatingProduct(false);
     }
   }
@@ -574,6 +596,7 @@ export function LotDetailScreen({
   }
 
   async function saveEditItem(itemId: number) {
+    if (!ensureCanMutate()) return;
     const qty = Number(editQtyInput);
     if (!Number.isFinite(qty) || qty <= 0) {
       setError('La cantidad debe ser mayor a 0.');
@@ -592,6 +615,7 @@ export function LotDetailScreen({
   }
 
   function confirmDeleteItem(itemId: number) {
+    if (!ensureCanMutate()) return;
     Alert.alert(
       'Eliminar ítem',
       '¿Seguro que quieres eliminar esta línea del lote?',
@@ -618,6 +642,7 @@ export function LotDetailScreen({
   }
 
   function confirmCloseLot() {
+    if (!ensureCanMutate()) return;
     Alert.alert(
       'Cerrar lote',
       closeSummaryMessage,
@@ -643,61 +668,78 @@ export function LotDetailScreen({
   }
 
   return (
-    <ScreenContainer backgroundColor="#E9EDF3">
-      {showInlineHeader ? (
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>Detalle lote</Text>
-        </View>
-      ) : null}
-
+    <ScreenContainer backgroundColor="#E9EDF3" scrollEnabled={false}>
       {loading ? <ActivityIndicator color="#0A8F5A" /> : null}
+      {!canMutate ? <Text style={styles.warning}>Sin conexión: creación, edición y cierre de lote bloqueados.</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       {detail ? (
-        <>
-          <View style={styles.card}>
-            <Text style={styles.lotNumber}>{detail.lot.lot_number}</Text>
-            <Text style={styles.meta}>Origen: {detail.lot.origin_name}</Text>
-            <Text style={styles.meta}>Tipo: {formatPurchaseType(detail.lot.purchase_type)}</Text>
-            {detail.lot.notes ? <Text style={styles.meta}>Observación: {detail.lot.notes}</Text> : null}
-            {detail.lot.purchase_type === 'invoice' ? (
-              <>
-                <Text style={styles.meta}>Proveedor: {detail.lot.supplier_name || 'Sin definir'}</Text>
-                <Text style={styles.meta}>
-                  Referencia: {detail.lot.invoice_reference || detail.lot.source_reference || 'Sin definir'}
-                </Text>
-              </>
+        <ScrollView
+          style={styles.workspaceScroll}
+          contentContainerStyle={styles.workspaceScrollContent}
+          stickyHeaderIndices={[0]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          <View style={styles.workspaceSticky}>
+            {showInlineHeader ? (
+              <View style={styles.headerRow}>
+                <Text style={styles.title}>Detalle lote</Text>
+              </View>
             ) : null}
-            {detail.lot.support_file_name ? (
-              <Text style={styles.meta}>Soporte adjunto: {detail.lot.support_file_name}</Text>
-            ) : null}
-            <Text style={styles.meta}>Líneas: {detail.items.length}</Text>
-            <Text style={styles.meta}>Unidades totales: {totalUnits}</Text>
-            <Text style={styles.meta}>Etiquetas pendientes: {pendingLabels}</Text>
 
-            <View style={styles.lotActionRow}>
-              <Pressable style={styles.addButton} onPress={openAddMode}>
-                <Text style={styles.addButtonText}>Agregar ítem</Text>
-              </Pressable>
-              <Pressable style={styles.createButton} onPress={() => { openCreateProductModal(); }}>
-                <Text style={styles.createButtonText}>Crear producto</Text>
-              </Pressable>
-            </View>
-          </View>
-
-          {!addMode && pendingLabels > 0 ? (
-            <View style={styles.workflowCard}>
-              {localWarnings.length > 0 ? (
-                <View style={styles.warningList}>
-                  {localWarnings.map((warning, index) => (
-                    <Text key={`${warning.code}-${warning.message}-${index}`} style={styles.warningItem}>
-                      • {warning.message}
-                    </Text>
-                  ))}
-                </View>
+            <View style={styles.card}>
+              <Text style={styles.lotNumber}>{detail.lot.lot_number}</Text>
+              <Text style={styles.meta}>Origen: {detail.lot.origin_name}</Text>
+              <Text style={styles.meta}>Tipo: {formatPurchaseType(detail.lot.purchase_type)}</Text>
+              {detail.lot.notes ? <Text style={styles.meta}>Observación: {detail.lot.notes}</Text> : null}
+              {detail.lot.purchase_type === 'invoice' ? (
+                <>
+                  <Text style={styles.meta}>Proveedor: {detail.lot.supplier_name || 'Sin definir'}</Text>
+                  <Text style={styles.meta}>
+                    Referencia: {detail.lot.invoice_reference || detail.lot.source_reference || 'Sin definir'}
+                  </Text>
+                </>
               ) : null}
+              {detail.lot.support_file_name ? (
+                <Text style={styles.meta}>Soporte adjunto: {detail.lot.support_file_name}</Text>
+              ) : null}
+              <Text style={styles.meta}>Líneas: {detail.items.length}</Text>
+              <Text style={styles.meta}>Unidades totales: {totalUnits}</Text>
+              <Text style={styles.meta}>Etiquetas pendientes: {pendingLabels}</Text>
+
+              <View style={styles.lotActionRow}>
+                <Pressable
+                  style={[styles.addButton, !canMutate ? styles.actionDisabled : null]}
+                  onPress={openAddMode}
+                  disabled={!canMutate}
+                >
+                  <Text style={styles.addButtonText}>Agregar ítem</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.createButton, !canMutate ? styles.actionDisabled : null]}
+                  onPress={() => { openCreateProductModal(); }}
+                  disabled={!canMutate}
+                >
+                  <Text style={styles.createButtonText}>Crear producto</Text>
+                </Pressable>
+              </View>
             </View>
-          ) : null}
+
+            {!addMode && pendingLabels > 0 ? (
+              <View style={styles.workflowCard}>
+                {localWarnings.length > 0 ? (
+                  <View style={styles.warningList}>
+                    {localWarnings.map((warning, index) => (
+                      <Text key={`${warning.code}-${warning.message}-${index}`} style={styles.warningItem}>
+                        • {warning.message}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
 
           {addMode ? (
             <View style={styles.searchPanel}>
@@ -794,9 +836,12 @@ export function LotDetailScreen({
               </View>
 
               <Pressable
-                style={[styles.saveButton, !selectedProduct ? styles.saveButtonDisabled : null]}
+                style={[
+                  styles.saveButton,
+                  !selectedProduct || !canMutate ? styles.saveButtonDisabled : null,
+                ]}
                 onPress={handleAddItem}
-                disabled={submittingItem || !selectedProduct}
+                disabled={submittingItem || !selectedProduct || !canMutate}
               >
                 <Text style={styles.saveButtonText}>{submittingItem ? 'Guardando...' : 'Agregar al lote'}</Text>
               </Pressable>
@@ -856,7 +901,7 @@ export function LotDetailScreen({
                         <Pressable
                           style={styles.itemActionPrimary}
                           onPress={() => saveEditItem(item.id)}
-                          disabled={savingItemId === item.id}
+                          disabled={savingItemId === item.id || !canMutate}
                         >
                           <Text style={styles.itemActionPrimaryText}>
                             {savingItemId === item.id ? 'Guardando...' : 'Guardar'}
@@ -893,13 +938,14 @@ export function LotDetailScreen({
                         <Pressable
                           style={styles.itemActionSecondary}
                           onPress={() => startEditItem(item.id, Number(item.qty_received || 0))}
+                          disabled={!canMutate}
                         >
                           <Text style={styles.itemActionSecondaryText}>Editar</Text>
                         </Pressable>
                         <Pressable
                           style={styles.itemActionDanger}
                           onPress={() => confirmDeleteItem(item.id)}
-                          disabled={deletingItemId === item.id}
+                          disabled={deletingItemId === item.id || !canMutate}
                         >
                           <Text style={styles.itemActionDangerText}>
                             {deletingItemId === item.id ? 'Eliminando...' : 'Eliminar'}
@@ -915,10 +961,10 @@ export function LotDetailScreen({
                 style={[
                   styles.closeLotButton,
                   pendingLabels > 0 ? styles.closeLotButtonWarning : null,
-                  closingLot ? styles.closeLotButtonDisabled : null,
+                  closingLot || !canMutate ? styles.closeLotButtonDisabled : null,
                 ]}
                 onPress={confirmCloseLot}
-                disabled={closingLot}
+                disabled={closingLot || !canMutate}
               >
                 <Text style={styles.closeLotButtonText}>
                   {closingLot
@@ -930,7 +976,7 @@ export function LotDetailScreen({
               </Pressable>
             </View>
           ) : null}
-        </>
+        </ScrollView>
       ) : null}
 
       <Modal
@@ -989,11 +1035,16 @@ export function LotDetailScreen({
             />
 
               <Text style={styles.modalLabel}>Grupo *</Text>
-              <Pressable style={styles.groupSelectorButton} onPress={() => setShowGroupPicker(true)}>
-                <Text style={styles.groupSelectorText}>
-                  {selectedGroupPath || selectedGroupLabel || 'Seleccionar grupo o subgrupo existente'}
-                </Text>
-              </Pressable>
+            <Pressable
+              style={[styles.groupSelectorButton, !canMutate ? styles.actionDisabled : null]}
+              onPress={() => setShowGroupPicker(true)}
+              disabled={!canMutate}
+            >
+              <Text style={styles.groupSelectorText}>
+                {selectedGroupPath || selectedGroupLabel || 'Seleccionar grupo o subgrupo existente'}
+              </Text>
+            </Pressable>
+            {createProductError ? <Text style={styles.modalError}>{createProductError}</Text> : null}
             {loadingProductGroups ? <ActivityIndicator color="#0A8F5A" /> : null}
 
             <Text style={styles.modalLabel}>Cantidad para este lote</Text>
@@ -1031,7 +1082,7 @@ export function LotDetailScreen({
               <Pressable
                 style={styles.saveButton}
                 onPress={handleCreateAndAddProduct}
-                disabled={creatingProduct || loadingProductCodes || loadingProductGroups}
+                disabled={creatingProduct || loadingProductCodes || loadingProductGroups || !canMutate}
               >
                 <Text style={styles.saveButtonText}>
                   {loadingProductCodes || loadingProductGroups
@@ -1074,6 +1125,7 @@ export function LotDetailScreen({
                       onPress={() => {
                         setSelectedGroupPath(group.path);
                         setSelectedGroupLabel(group.display_name);
+                        setCreateProductError(null);
                         setShowGroupPicker(false);
                       }}
                     >
@@ -1113,6 +1165,22 @@ export function LotDetailScreen({
 }
 
 const styles = StyleSheet.create({
+  workspaceScroll: {
+    width: '100%',
+  },
+  workspaceScrollContent: {
+    paddingTop: 0,
+    paddingBottom: 130,
+    gap: 12,
+  },
+  workspaceSticky: {
+    backgroundColor: '#E9EDF3',
+    paddingTop: 0,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#D8DFEA',
+    gap: 12,
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1305,6 +1373,11 @@ const styles = StyleSheet.create({
   groupSelectorText: {
     color: '#0F172A',
     fontWeight: '600',
+  },
+  modalError: {
+    color: '#be123c',
+    fontSize: 13,
+    marginTop: -2,
   },
   helperRow: {
     flexDirection: 'row',
@@ -1613,6 +1686,20 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     fontWeight: '700',
     fontSize: 13,
+  },
+  actionDisabled: {
+    opacity: 0.55,
+  },
+  warning: {
+    color: '#92400E',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+    marginBottom: 6,
   },
   error: {
     color: '#be123c',

@@ -14,7 +14,9 @@ import {
 } from 'react-native';
 
 import { useAppSession } from '../contexts/AppSessionContext';
+import { getRecountDetail, listRecounts } from '../services/api/recounts';
 import { getLotDetail, listReceivingCreatedProducts, listReceivingDocuments } from '../services/api/receiving';
+import type { RecountDetail, RecountRecord } from '../types/recounts';
 import type { ReceivingCreatedProduct, ReceivingDocument, ReceivingLotDetail } from '../types/receiving';
 import { ScreenContainer } from '../ui/ScreenContainer';
 
@@ -22,6 +24,14 @@ function formatPurchaseType(type: string) {
   if (type === 'cash') return 'Contado';
   if (type === 'invoice') return 'Factura';
   return type;
+}
+
+function formatRecountStatus(status: RecountRecord['status']) {
+  if (status === 'applied') return 'Aplicado';
+  if (status === 'closed') return 'Cerrado';
+  if (status === 'cancelled') return 'Cancelado';
+  if (status === 'counting') return 'En conteo';
+  return 'Borrador';
 }
 
 function formatDateTime(value?: string | null) {
@@ -37,6 +47,10 @@ function formatDateTime(value?: string | null) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatQty(value?: number | null): string {
+  return Number(value || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 });
 }
 
 function getBogotaYmd(date: Date): string {
@@ -105,10 +119,26 @@ function isImageSupportFile(filename?: string | null): boolean {
   );
 }
 
+function belongsToStockDevice(stockDeviceId: string, candidate?: string | null): boolean {
+  const current = stockDeviceId.trim();
+  const docDevice = (candidate || '').trim();
+  if (!current || !docDevice) return false;
+  return current === docDevice;
+}
+
+function resolveReceivingDocumentSortDate(doc: ReceivingDocument): string {
+  return doc.closed_at || doc.created_at || '';
+}
+
+function resolveRecountDocumentSortDate(doc: RecountRecord): string {
+  return doc.applied_at || doc.closed_at || doc.created_at || '';
+}
+
 export function HistoryScreen() {
-  const { apiBase, apiClient } = useAppSession();
+  const { apiBase, apiClient, stockDeviceId } = useAppSession();
   const [tab, setTab] = useState<'documents' | 'products'>('documents');
   const [docs, setDocs] = useState<ReceivingDocument[]>([]);
+  const [recountDocs, setRecountDocs] = useState<RecountRecord[]>([]);
   const [createdProducts, setCreatedProducts] = useState<ReceivingCreatedProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +148,10 @@ export function HistoryScreen() {
   const [selectedDocDetail, setSelectedDocDetail] = useState<ReceivingLotDetail | null>(null);
   const [loadingSelectedDocDetail, setLoadingSelectedDocDetail] = useState(false);
   const [selectedDocDetailError, setSelectedDocDetailError] = useState<string | null>(null);
+  const [selectedRecount, setSelectedRecount] = useState<RecountRecord | null>(null);
+  const [selectedRecountDetail, setSelectedRecountDetail] = useState<RecountDetail | null>(null);
+  const [loadingSelectedRecountDetail, setLoadingSelectedRecountDetail] = useState(false);
+  const [selectedRecountDetailError, setSelectedRecountDetailError] = useState<string | null>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
 
   const computeDateRange = useCallback(() => {
@@ -135,13 +169,36 @@ export function HistoryScreen() {
     setError(null);
     if (tab === 'documents') {
       const { date_from, date_to } = computeDateRange();
-      const page = await listReceivingDocuments(apiClient, {
-        skip: 0,
-        limit: 200,
-        date_from,
-        date_to,
+      const [receivingPage, recountClosedPage, recountAppliedPage] = await Promise.all([
+        listReceivingDocuments(apiClient, {
+          skip: 0,
+          limit: 200,
+          date_from,
+          date_to,
+        }),
+        listRecounts(apiClient, {
+          status: 'closed',
+          source: 'app',
+          skip: 0,
+          limit: 100,
+        }),
+        listRecounts(apiClient, {
+          status: 'applied',
+          source: 'app',
+          skip: 0,
+          limit: 100,
+        }),
+      ]);
+      const recountById = new Map<number, RecountRecord>();
+      [...recountClosedPage.items, ...recountAppliedPage.items].forEach((item) => {
+        recountById.set(item.id, item);
       });
-      setDocs(page.items);
+      setDocs(
+        receivingPage.items.filter((doc) => belongsToStockDevice(stockDeviceId, doc.stock_device_id)),
+      );
+      setRecountDocs(
+        Array.from(recountById.values()).filter((doc) => belongsToStockDevice(stockDeviceId, doc.stock_device_id)),
+      );
       return;
     }
     const page = await listReceivingCreatedProducts(apiClient, {
@@ -149,7 +206,8 @@ export function HistoryScreen() {
       limit: 200,
     });
     setCreatedProducts(page.items);
-  }, [apiClient, computeDateRange, tab]);
+    setRecountDocs([]);
+  }, [apiClient, computeDateRange, stockDeviceId, tab]);
 
   const filteredDocs = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -170,6 +228,35 @@ export function HistoryScreen() {
     });
   }, [docs, query]);
 
+  const filteredRecountDocs = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    const { date_from, date_to } = computeDateRange();
+    const fromMs = date_from ? Date.parse(date_from) : null;
+    const toMs = date_to ? Date.parse(date_to) : null;
+    const recountItems = !term
+      ? recountDocs
+      : recountDocs.filter((doc) => {
+          const code = (doc.code || '').toLowerCase();
+          const title = (doc.title || '').toLowerCase();
+          const scope = (doc.scope_value || '').toLowerCase();
+          const user = (doc.closed_by_user_name || doc.applied_by_user_name || '').toLowerCase();
+          return code.includes(term) || title.includes(term) || scope.includes(term) || user.includes(term);
+        });
+    const ranged = recountItems.filter((doc) => {
+      const finishedAt = doc.applied_at || doc.closed_at || doc.created_at;
+      const ts = Date.parse(finishedAt);
+      if (!Number.isFinite(ts)) return true;
+      if (fromMs != null && ts < fromMs) return false;
+      if (toMs != null && ts > toMs) return false;
+      return true;
+    });
+    return [...ranged].sort((a, b) => {
+      const aDate = a.applied_at || a.closed_at || a.created_at || '';
+      const bDate = b.applied_at || b.closed_at || b.created_at || '';
+      return bDate.localeCompare(aDate);
+    });
+  }, [computeDateRange, query, recountDocs]);
+
   const filteredCreatedProducts = useMemo(() => {
     const term = query.trim().toLowerCase();
     if (!term) return createdProducts;
@@ -188,6 +275,22 @@ export function HistoryScreen() {
       );
     });
   }, [createdProducts, query]);
+
+  const orderedDocumentItems = useMemo(() => {
+    const receivingItems = filteredDocs.map((doc) => ({
+      kind: 'receiving' as const,
+      id: `rcv-${doc.id}`,
+      sortDate: resolveReceivingDocumentSortDate(doc),
+      doc,
+    }));
+    const recountItems = filteredRecountDocs.map((doc) => ({
+      kind: 'recount' as const,
+      id: `rec-${doc.id}`,
+      sortDate: resolveRecountDocumentSortDate(doc),
+      doc,
+    }));
+    return [...receivingItems, ...recountItems].sort((a, b) => b.sortDate.localeCompare(a.sortDate));
+  }, [filteredDocs, filteredRecountDocs]);
 
   useEffect(() => {
     let active = true;
@@ -222,6 +325,44 @@ export function HistoryScreen() {
       active = false;
     };
   }, [apiClient, selectedDoc]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedRecount) {
+      setSelectedRecountDetail(null);
+      setSelectedRecountDetailError(null);
+      setLoadingSelectedRecountDetail(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    setSelectedRecountDetail(null);
+    setSelectedRecountDetailError(null);
+    setLoadingSelectedRecountDetail(true);
+
+    getRecountDetail(apiClient, selectedRecount.id, {
+      counted_only: true,
+      skip: 0,
+      limit: 600,
+    })
+      .then((detail) => {
+        if (!active) return;
+        setSelectedRecountDetail(detail);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setSelectedRecountDetailError(err instanceof Error ? err.message : 'No se pudo cargar el detalle del recuento');
+      })
+      .finally(() => {
+        if (!active) return;
+        setLoadingSelectedRecountDetail(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [apiClient, selectedRecount]);
 
   const selectedSupportFileUrl = useMemo(() => {
     const lotId = selectedDoc?.id;
@@ -282,40 +423,82 @@ export function HistoryScreen() {
   }, [load]);
 
   return (
-    <ScreenContainer backgroundColor="#E9EDF3">
-      {selectedDoc ? (
+    <ScreenContainer backgroundColor="#E9EDF3" scrollEnabled={false}>
+      {selectedDoc || selectedRecount ? (
         <>
-          <View style={styles.headerRow}>
-            <Text style={styles.title}>Detalle recepción</Text>
-            <Pressable style={styles.refreshButton} onPress={() => setSelectedDoc(null)}>
-              <Text style={styles.refreshButtonText}>Volver</Text>
-            </Pressable>
-          </View>
+          <ScrollView
+            style={styles.listScroll}
+            contentContainerStyle={styles.historyScrollContent}
+            stickyHeaderIndices={[0]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
+            <View style={styles.historySticky}>
+              <View style={styles.headerRow}>
+                <Text style={styles.title}>{selectedDoc ? 'Detalle recepción' : 'Detalle recuento'}</Text>
+                <Pressable
+                  style={styles.refreshButton}
+                  onPress={() => {
+                    setSelectedDoc(null);
+                    setSelectedRecount(null);
+                  }}
+                >
+                  <Text style={styles.refreshButtonText}>Volver</Text>
+                </Pressable>
+              </View>
 
-          <View style={styles.detailHeaderCard}>
-            <Text style={styles.modalTitle}>{selectedDoc.lot_number}</Text>
-            <Text style={styles.modalMeta}>Estado: Cerrado</Text>
-            <Text style={styles.modalMeta}>Tipo: {formatPurchaseType(selectedDoc.purchase_type)}</Text>
-            <Text style={styles.modalMeta}>Origen: {selectedDoc.origin_name}</Text>
-            <Text style={styles.modalMeta}>Líneas: {selectedDoc.lines_count}</Text>
-            <Text style={styles.modalMeta}>Unidades: {selectedDoc.units_total}</Text>
-            <Text style={styles.modalMeta}>Cerrado: {formatDateTime(selectedDoc.closed_at)}</Text>
-            {selectedDoc.closed_by_user_name ? (
-              <Text style={styles.modalMeta}>Responsable: {selectedDoc.closed_by_user_name}</Text>
-            ) : null}
-            {selectedDoc.supplier_name ? (
-              <Text style={styles.modalMeta}>Proveedor: {selectedDoc.supplier_name}</Text>
-            ) : null}
-            {selectedDoc.invoice_reference ? (
-              <Text style={styles.modalMeta}>Referencia factura: {selectedDoc.invoice_reference}</Text>
-            ) : null}
-            {selectedDocNotes ? (
-              <Text style={styles.modalMeta}>Observación: {selectedDocNotes}</Text>
-            ) : null}
-          </View>
+              {selectedDoc ? (
+                <View style={styles.detailHeaderCard}>
+                  <Text style={styles.modalTitle}>{selectedDoc.lot_number}</Text>
+                  <Text style={styles.modalMeta}>Estado: Cerrado</Text>
+                  <Text style={styles.modalMeta}>Tipo: {formatPurchaseType(selectedDoc.purchase_type)}</Text>
+                  <Text style={styles.modalMeta}>Origen: {selectedDoc.origin_name}</Text>
+                  <Text style={styles.modalMeta}>Líneas: {selectedDoc.lines_count}</Text>
+                  <Text style={styles.modalMeta}>Unidades: {selectedDoc.units_total}</Text>
+                  <Text style={styles.modalMeta}>Cerrado: {formatDateTime(selectedDoc.closed_at)}</Text>
+                  {selectedDoc.closed_by_user_name ? (
+                    <Text style={styles.modalMeta}>Responsable: {selectedDoc.closed_by_user_name}</Text>
+                  ) : null}
+                  {selectedDoc.supplier_name ? (
+                    <Text style={styles.modalMeta}>Proveedor: {selectedDoc.supplier_name}</Text>
+                  ) : null}
+                  {selectedDoc.invoice_reference ? (
+                    <Text style={styles.modalMeta}>Referencia factura: {selectedDoc.invoice_reference}</Text>
+                  ) : null}
+                  {selectedDocNotes ? (
+                    <Text style={styles.modalMeta}>Observación: {selectedDocNotes}</Text>
+                  ) : null}
+                </View>
+              ) : selectedRecount ? (
+                <View style={styles.detailHeaderCard}>
+                  <Text style={styles.modalTitle}>{selectedRecount.code}</Text>
+                  <Text style={styles.modalMeta}>Estado: {formatRecountStatus(selectedRecount.status)}</Text>
+                  <Text style={styles.modalMeta}>Modo: {selectedRecount.count_mode === 'blind' ? 'Ciego' : 'Visible'}</Text>
+                  <Text style={styles.modalMeta}>
+                    Alcance:{' '}
+                    {selectedRecount.scope_type === 'all'
+                      ? 'Todo'
+                      : selectedRecount.scope_type === 'group'
+                        ? `Por categoría (${selectedRecount.scope_value || '—'})`
+                        : 'Libre'}
+                  </Text>
+                  <Text style={styles.modalMeta}>
+                    Líneas: {selectedRecount.summary.counted_lines}/{selectedRecount.summary.total_lines}
+                  </Text>
+                  <Text style={styles.modalMeta}>Dif: {selectedRecount.summary.difference_lines}</Text>
+                  <Text style={styles.modalMeta}>
+                    Finalizado: {formatDateTime(resolveRecountDocumentSortDate(selectedRecount))}
+                  </Text>
+                  {selectedRecount.applied_by_user_name || selectedRecount.closed_by_user_name ? (
+                    <Text style={styles.modalMeta}>
+                      Responsable: {selectedRecount.applied_by_user_name || selectedRecount.closed_by_user_name}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
 
-          <ScrollView style={styles.listScroll} contentContainerStyle={styles.detailScreenContent}>
-            {selectedDoc.support_file_name ? (
+            {selectedDoc?.support_file_name ? (
               <View style={styles.supportBox}>
                 <Text style={styles.supportTitle}>Soporte adjunto</Text>
                 <Text style={styles.supportMeta}>{selectedDoc.support_file_name}</Text>
@@ -332,32 +515,64 @@ export function HistoryScreen() {
               </View>
             ) : null}
 
-            <View style={styles.detailSection}>
-              <Text style={styles.detailSectionTitle}>Productos recibidos</Text>
-              {loadingSelectedDocDetail ? <ActivityIndicator color="#0A8F5A" /> : null}
-              {selectedDocDetailError ? (
-                <Text style={styles.detailErrorText}>{selectedDocDetailError}</Text>
-              ) : null}
-              {!loadingSelectedDocDetail && !selectedDocDetailError && selectedDocDetail?.items.length === 0 ? (
-                <Text style={styles.detailEmptyText}>No hay ítems registrados en este lote.</Text>
-              ) : null}
-              {!loadingSelectedDocDetail && !selectedDocDetailError
-                ? selectedDocDetail?.items.map((item) => (
-                    <View key={item.id} style={styles.detailItemCard}>
-                      <Text style={styles.detailItemName}>{item.product_name_snapshot}</Text>
-                      <Text style={styles.detailItemMeta}>Cantidad: {item.qty_received}</Text>
-                      <Text style={styles.detailItemMeta}>
-                        SKU: {item.sku_snapshot || 'N/A'} · Código: {item.barcode_snapshot || 'N/A'}
-                      </Text>
-                      <Text style={styles.detailItemMeta}>
-                        Venta: ${Number(item.unit_price_snapshot || 0).toLocaleString('es-CO')} · Costo: $
-                        {Number(item.unit_cost_snapshot || 0).toLocaleString('es-CO')}
-                      </Text>
-                      {item.notes ? <Text style={styles.detailItemMeta}>Nota: {item.notes}</Text> : null}
-                    </View>
-                  ))
-                : null}
-            </View>
+            {selectedDoc ? (
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>Productos recibidos</Text>
+                {loadingSelectedDocDetail ? <ActivityIndicator color="#0A8F5A" /> : null}
+                {selectedDocDetailError ? (
+                  <Text style={styles.detailErrorText}>{selectedDocDetailError}</Text>
+                ) : null}
+                {!loadingSelectedDocDetail && !selectedDocDetailError && selectedDocDetail?.items.length === 0 ? (
+                  <Text style={styles.detailEmptyText}>No hay ítems registrados en este lote.</Text>
+                ) : null}
+                {!loadingSelectedDocDetail && !selectedDocDetailError
+                  ? selectedDocDetail?.items.map((item) => (
+                      <View key={item.id} style={styles.detailItemCard}>
+                        <Text style={styles.detailItemName}>{item.product_name_snapshot}</Text>
+                        <Text style={styles.detailItemMeta}>Cantidad: {item.qty_received}</Text>
+                        <Text style={styles.detailItemMeta}>
+                          SKU: {item.sku_snapshot || 'N/A'} · Código: {item.barcode_snapshot || 'N/A'}
+                        </Text>
+                        <Text style={styles.detailItemMeta}>
+                          Venta: ${Number(item.unit_price_snapshot || 0).toLocaleString('es-CO')} · Costo: $
+                          {Number(item.unit_cost_snapshot || 0).toLocaleString('es-CO')}
+                        </Text>
+                        {item.notes ? <Text style={styles.detailItemMeta}>Nota: {item.notes}</Text> : null}
+                      </View>
+                    ))
+                  : null}
+              </View>
+            ) : (
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>Líneas contadas</Text>
+                {loadingSelectedRecountDetail ? <ActivityIndicator color="#0A8F5A" /> : null}
+                {selectedRecountDetailError ? (
+                  <Text style={styles.detailErrorText}>{selectedRecountDetailError}</Text>
+                ) : null}
+                {!loadingSelectedRecountDetail &&
+                !selectedRecountDetailError &&
+                (selectedRecountDetail?.lines.length ?? 0) === 0 ? (
+                  <Text style={styles.detailEmptyText}>No hay líneas capturadas en este recuento.</Text>
+                ) : null}
+                {!loadingSelectedRecountDetail && !selectedRecountDetailError
+                  ? selectedRecountDetail?.lines.map((line) => (
+                      <View key={line.id} style={styles.detailItemCard}>
+                        <Text style={styles.detailItemName}>{line.product_name}</Text>
+                        <Text style={styles.detailItemMeta}>
+                          SKU: {line.sku || 'N/A'} · Código: {line.barcode || 'N/A'}
+                        </Text>
+                        <Text style={styles.detailItemMeta}>Contada: {formatQty(line.counted_qty)}</Text>
+                        {selectedRecountDetail.recount.count_mode !== 'blind' ? (
+                          <Text style={styles.detailItemMeta}>Sistema: {formatQty(line.system_qty)}</Text>
+                        ) : null}
+                        <Text style={styles.detailItemMeta}>
+                          Diferencia: {formatQty((line.counted_qty ?? 0) - (line.system_qty ?? 0))}
+                        </Text>
+                      </View>
+                    ))
+                  : null}
+              </View>
+            )}
           </ScrollView>
 
           <Modal
@@ -402,109 +617,145 @@ export function HistoryScreen() {
         </>
       ) : (
         <>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Historial</Text>
-        <Pressable style={styles.refreshButton} onPress={load}>
-          <Text style={styles.refreshButtonText}>Refrescar</Text>
-        </Pressable>
-      </View>
-      <View style={styles.tabRow}>
-        <Pressable
-          style={[styles.tabBtn, tab === 'documents' ? styles.tabBtnActive : null]}
-          onPress={() => setTab('documents')}
-        >
-          <Text style={[styles.tabBtnText, tab === 'documents' ? styles.tabBtnTextActive : null]}>
-            Recepciones
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.tabBtn, tab === 'products' ? styles.tabBtnActive : null]}
-          onPress={() => setTab('products')}
-        >
-          <Text style={[styles.tabBtnText, tab === 'products' ? styles.tabBtnTextActive : null]}>
-            Productos creados
-          </Text>
-        </Pressable>
-      </View>
-
-      {loading ? <ActivityIndicator color="#0A8F5A" /> : null}
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <View style={styles.filtersCard}>
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          style={styles.searchInput}
-          placeholder={
-            tab === 'documents'
-              ? 'Buscar por lote, origen, responsable o proveedor'
-              : 'Buscar por nombre, SKU, código, grupo o usuario'
-          }
-          placeholderTextColor="#64748B"
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        {tab === 'documents' ? (
-          <View style={styles.rangeRow}>
-            <Pressable
-              style={[styles.rangeBtn, range === 'today' ? styles.rangeBtnActive : null]}
-              onPress={() => setRange('today')}
-            >
-              <Text style={[styles.rangeBtnText, range === 'today' ? styles.rangeBtnTextActive : null]}>
-                Hoy
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.rangeBtn, range === '7d' ? styles.rangeBtnActive : null]}
-              onPress={() => setRange('7d')}
-            >
-              <Text style={[styles.rangeBtnText, range === '7d' ? styles.rangeBtnTextActive : null]}>
-                7 días
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.rangeBtn, range === '30d' ? styles.rangeBtnActive : null]}
-              onPress={() => setRange('30d')}
-            >
-              <Text style={[styles.rangeBtnText, range === '30d' ? styles.rangeBtnTextActive : null]}>
-                30 días
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.rangeBtn, range === 'all' ? styles.rangeBtnActive : null]}
-              onPress={() => setRange('all')}
-            >
-              <Text style={[styles.rangeBtnText, range === 'all' ? styles.rangeBtnTextActive : null]}>
-                Todo
-              </Text>
-            </Pressable>
-          </View>
-        ) : null}
-      </View>
-
-      {!loading && tab === 'documents' && filteredDocs.length === 0 ? (
-        <Text style={styles.empty}>Aún no hay documentos de recepción cerrados.</Text>
-      ) : null}
-      {!loading && tab === 'products' && filteredCreatedProducts.length === 0 ? (
-        <Text style={styles.empty}>Aún no hay productos creados desde la app.</Text>
-      ) : null}
-
-      <ScrollView style={styles.listScroll} contentContainerStyle={styles.list}>
-        {tab === 'documents'
-          ? filteredDocs.map((doc) => (
-              <Pressable key={doc.id} style={styles.card} onPress={() => setSelectedDoc(doc)}>
-                <View style={styles.cardHeadRow}>
-                  <Text style={styles.cardTitle}>{doc.lot_number}</Text>
-                  <Text style={styles.badgeClosed}>Cerrado</Text>
+          <ScrollView
+            style={styles.listScroll}
+            contentContainerStyle={styles.historyScrollContent}
+            stickyHeaderIndices={[0]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
+            <View style={styles.historySticky}>
+              <View style={styles.historyMainHeader}>
+                <View style={styles.headerRow}>
+                  <Text style={styles.title}>Historial</Text>
+                  <Pressable style={styles.refreshButton} onPress={load}>
+                    <Text style={styles.refreshButtonText}>Refrescar</Text>
+                  </Pressable>
                 </View>
-                <Text style={styles.cardMeta}>Origen: {doc.origin_name}</Text>
-                <Text style={styles.cardMeta}>Tipo: {formatPurchaseType(doc.purchase_type)}</Text>
-                <Text style={styles.cardMeta}>Líneas: {doc.lines_count} · Unidades: {doc.units_total}</Text>
-                <Text style={styles.cardMeta}>Cerrado: {formatDateTime(doc.closed_at)}</Text>
-                {doc.closed_by_user_name ? (
-                  <Text style={styles.cardMeta}>Responsable: {doc.closed_by_user_name}</Text>
+                <View style={styles.tabRow}>
+                  <Pressable
+                    style={[styles.tabBtn, tab === 'documents' ? styles.tabBtnActive : null]}
+                    onPress={() => setTab('documents')}
+                  >
+                    <Text style={[styles.tabBtnText, tab === 'documents' ? styles.tabBtnTextActive : null]}>
+                      Documentos
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.tabBtn, tab === 'products' ? styles.tabBtnActive : null]}
+                    onPress={() => setTab('products')}
+                  >
+                    <Text style={[styles.tabBtnText, tab === 'products' ? styles.tabBtnTextActive : null]}>
+                      Productos creados
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              {loading ? <ActivityIndicator color="#0A8F5A" /> : null}
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+              <View style={styles.filtersCard}>
+                <TextInput
+                  value={query}
+                  onChangeText={setQuery}
+                  style={styles.searchInput}
+                  placeholder={
+                    tab === 'documents'
+                      ? 'Buscar por lote/recuento, origen, responsable o proveedor'
+                      : 'Buscar por nombre, SKU, código, grupo o usuario'
+                  }
+                  placeholderTextColor="#64748B"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {tab === 'documents' ? (
+                  <View style={styles.rangeRow}>
+                    <Pressable
+                      style={[styles.rangeBtn, range === 'today' ? styles.rangeBtnActive : null]}
+                      onPress={() => setRange('today')}
+                    >
+                      <Text style={[styles.rangeBtnText, range === 'today' ? styles.rangeBtnTextActive : null]}>
+                        Hoy
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.rangeBtn, range === '7d' ? styles.rangeBtnActive : null]}
+                      onPress={() => setRange('7d')}
+                    >
+                      <Text style={[styles.rangeBtnText, range === '7d' ? styles.rangeBtnTextActive : null]}>
+                        7 días
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.rangeBtn, range === '30d' ? styles.rangeBtnActive : null]}
+                      onPress={() => setRange('30d')}
+                    >
+                      <Text style={[styles.rangeBtnText, range === '30d' ? styles.rangeBtnTextActive : null]}>
+                        30 días
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.rangeBtn, range === 'all' ? styles.rangeBtnActive : null]}
+                      onPress={() => setRange('all')}
+                    >
+                      <Text style={[styles.rangeBtnText, range === 'all' ? styles.rangeBtnTextActive : null]}>
+                        Todo
+                      </Text>
+                    </Pressable>
+                  </View>
                 ) : null}
-              </Pressable>
-            ))
+              </View>
+            </View>
+
+            {!loading && tab === 'documents' && filteredDocs.length + filteredRecountDocs.length === 0 ? (
+              <Text style={styles.empty}>Aún no hay documentos finalizados.</Text>
+            ) : null}
+            {!loading && tab === 'products' && filteredCreatedProducts.length === 0 ? (
+              <Text style={styles.empty}>Aún no hay productos creados desde la app.</Text>
+            ) : null}
+
+        {tab === 'documents'
+          ? orderedDocumentItems.map((item) => {
+              if (item.kind === 'receiving') {
+                const doc = item.doc;
+                return (
+                  <Pressable key={item.id} style={styles.card} onPress={() => setSelectedDoc(doc)}>
+                    <View style={styles.cardHeadRow}>
+                      <Text style={styles.cardTitle}>{doc.lot_number}</Text>
+                      <Text style={styles.badgeClosed}>Recepción cerrada</Text>
+                    </View>
+                    <Text style={styles.cardMeta}>Origen: {doc.origin_name}</Text>
+                    <Text style={styles.cardMeta}>Tipo: {formatPurchaseType(doc.purchase_type)}</Text>
+                    <Text style={styles.cardMeta}>Líneas: {doc.lines_count} · Unidades: {doc.units_total}</Text>
+                    <Text style={styles.cardMeta}>Cerrado: {formatDateTime(doc.closed_at)}</Text>
+                    {doc.closed_by_user_name ? (
+                      <Text style={styles.cardMeta}>Responsable: {doc.closed_by_user_name}</Text>
+                    ) : null}
+                  </Pressable>
+                );
+              }
+              const doc = item.doc;
+              return (
+                <Pressable key={item.id} style={styles.card} onPress={() => setSelectedRecount(doc)}>
+                  <View style={styles.cardHeadRow}>
+                    <Text style={styles.cardTitle}>{doc.code}</Text>
+                    <Text style={styles.badgeCreated}>Recuento {formatRecountStatus(doc.status)}</Text>
+                  </View>
+                  <Text style={styles.cardMeta}>Modo: {doc.count_mode === 'blind' ? 'Ciego' : 'Visible'}</Text>
+                  <Text style={styles.cardMeta}>
+                    Líneas: {doc.summary.counted_lines}/{doc.summary.total_lines} · Dif: {doc.summary.difference_lines}
+                  </Text>
+                  <Text style={styles.cardMeta}>
+                    Finalizado: {formatDateTime(resolveRecountDocumentSortDate(doc))}
+                  </Text>
+                  {doc.closed_by_user_name || doc.applied_by_user_name ? (
+                    <Text style={styles.cardMeta}>
+                      Responsable: {doc.applied_by_user_name || doc.closed_by_user_name}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              );
+            })
           : filteredCreatedProducts.map((item) => (
               <View key={item.audit_id} style={styles.card}>
                 <View style={styles.cardHeadRow}>
@@ -527,7 +778,7 @@ export function HistoryScreen() {
                 ) : null}
               </View>
             ))}
-      </ScrollView>
+          </ScrollView>
         </>
       )}
     </ScreenContainer>
@@ -535,6 +786,21 @@ export function HistoryScreen() {
 }
 
 const styles = StyleSheet.create({
+  historyScrollContent: {
+    gap: 10,
+    paddingBottom: 12,
+  },
+  historySticky: {
+    backgroundColor: '#E9EDF3',
+    gap: 10,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#D8DFEA',
+  },
+  historyMainHeader: {
+    gap: 12,
+    paddingBottom: 2,
+  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -590,7 +856,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   listScroll: {
-    flex: 1,
+    width: '100%',
   },
   detailScreenContent: {
     gap: 8,

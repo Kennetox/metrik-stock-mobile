@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -45,6 +45,7 @@ const COLORS = {
   closeBg: '#DCEFE3',
   closeBorder: '#9ED9B3',
   closeText: '#0A8F5A',
+  error: '#DC2626',
 };
 
 export function LoginScreen() {
@@ -59,18 +60,64 @@ export function LoginScreen() {
     setStationId,
     stationLabel,
     setStationLabel,
-    apiBase,
-    setApiBase,
+    isInitialSetupComplete,
+    completeInitialSetup,
+    deviceBlockedReason,
+    clearDeviceBlockedNotice,
   } = useAppSession();
+
   const [emailInput, setEmailInput] = useState(tabletEmail);
-  const [emailStageDone, setEmailStageDone] = useState(false);
+  const [emailStageDone, setEmailStageDone] = useState(Boolean(tabletEmail));
   const [pin, setPin] = useState('');
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(!isInitialSetupComplete);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [validatingEmail, setValidatingEmail] = useState(false);
   const PIN_LENGTH = 4;
 
+  useEffect(() => {
+    if (!isInitialSetupComplete) {
+      setShowSettings(true);
+    }
+  }, [isInitialSetupComplete]);
+
+  useEffect(() => {
+    if (!tabletEmail) {
+      return;
+    }
+    setEmailInput(tabletEmail);
+    setEmailStageDone(true);
+  }, [tabletEmail]);
+
+  const settingsMandatory = useMemo(() => !isInitialSetupComplete, [isInitialSetupComplete]);
+
+  function saveConfiguration() {
+    if (!stationId.trim()) {
+      setConfigError('Debes indicar ID local del dispositivo.');
+      return;
+    }
+    if (!stationLabel.trim()) {
+      setConfigError('Debes indicar nombre del dispositivo.');
+      return;
+    }
+    setConfigError(null);
+    if (settingsMandatory) {
+      completeInitialSetup();
+      setTabletEmail('');
+      setEmailInput('');
+      setEmailStageDone(false);
+      setPin('');
+    }
+    setShowSettings(false);
+  }
+
   async function validateEmailAndContinue() {
+    if (settingsMandatory) {
+      setShowSettings(true);
+      ToastAndroid.show('Primero completa la configuración inicial.', ToastAndroid.SHORT);
+      return;
+    }
+
     const normalizedEmail = emailInput.trim().toLowerCase();
     if (!normalizedEmail) {
       ToastAndroid.show('Ingresa un correo válido', ToastAndroid.SHORT);
@@ -107,9 +154,7 @@ export function LoginScreen() {
       await loginWithPin(nextPin, emailInput.trim().toLowerCase());
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No fue posible iniciar sesión';
-      const toastMessage = message.toLowerCase().includes('pin')
-        ? 'Código incorrecto'
-        : message;
+      const toastMessage = message.toLowerCase().includes('pin') ? 'Código incorrecto' : message;
       ToastAndroid.show(toastMessage, ToastAndroid.SHORT);
       setPin('');
     } finally {
@@ -124,7 +169,7 @@ export function LoginScreen() {
     const nextPin = `${pin}${digit}`;
     setPin(nextPin);
     if (nextPin.length === PIN_LENGTH) {
-      attemptLogin(nextPin);
+      attemptLogin(nextPin).catch(() => undefined);
     }
   }
 
@@ -154,6 +199,15 @@ export function LoginScreen() {
         </View>
 
         <View style={styles.card}>
+          {deviceBlockedReason ? (
+            <View style={styles.blockedNotice}>
+              <Text style={styles.blockedNoticeTitle}>Dispositivo bloqueado</Text>
+              <Text style={styles.blockedNoticeText}>{deviceBlockedReason}</Text>
+              <Pressable style={styles.blockedNoticeButton} onPress={clearDeviceBlockedNotice}>
+                <Text style={styles.blockedNoticeButtonText}>Entendido</Text>
+              </Pressable>
+            </View>
+          ) : null}
           {!emailStageDone ? (
             <View style={styles.emailStageWrap}>
               <Text style={styles.emailStageLabel}>Correo de usuario</Text>
@@ -169,11 +223,7 @@ export function LoginScreen() {
                   placeholderTextColor="#64748B"
                 />
                 {emailInput.length > 0 ? (
-                  <Pressable
-                    style={styles.emailClearBtn}
-                    onPress={() => setEmailInput('')}
-                    hitSlop={8}
-                  >
+                  <Pressable style={styles.emailClearBtn} onPress={() => setEmailInput('')} hitSlop={8}>
                     <Text style={styles.emailClearBtnText}>×</Text>
                   </Pressable>
                 ) : null}
@@ -207,17 +257,16 @@ export function LoginScreen() {
                   <Text style={styles.pinChangeEmailText}>Cambiar</Text>
                 </Pressable>
               </View>
+
               <View style={styles.pinDotsWrap}>
                 {Array.from({ length: PIN_LENGTH }).map((_, index) => (
                   <View
                     key={index}
-                    style={[
-                      styles.pinDot,
-                      index < pin.length ? styles.pinDotFilled : styles.pinDotEmpty,
-                    ]}
+                    style={[styles.pinDot, index < pin.length ? styles.pinDotFilled : styles.pinDotEmpty]}
                   />
                 ))}
               </View>
+
               {submitting ? (
                 <View style={styles.loadingWrap}>
                   <ActivityIndicator color="#93c5fd" />
@@ -254,41 +303,53 @@ export function LoginScreen() {
         </View>
       </View>
 
-      <Modal visible={showSettings} transparent animationType="fade" onRequestClose={() => setShowSettings(false)}>
+      <Modal
+        visible={showSettings}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!settingsMandatory) {
+            setShowSettings(false);
+          }
+        }}
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Configuración técnica</Text>
+            <Text style={styles.modalTitle}>Configuración del dispositivo</Text>
 
-            <Text style={styles.label}>API Base</Text>
-            <TextInput
-              value={apiBase}
-              onChangeText={setApiBase}
-              style={styles.configInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <Text style={styles.label}>ID estación tablet</Text>
+            <Text style={styles.label}>ID local del dispositivo</Text>
             <TextInput
               value={stationId}
               onChangeText={setStationId}
               style={styles.configInput}
               autoCapitalize="characters"
               autoCorrect={false}
+              editable={settingsMandatory}
             />
 
-            <Text style={styles.label}>Nombre estación tablet</Text>
+            <Text style={styles.label}>Nombre del dispositivo de inventario</Text>
             <TextInput
               value={stationLabel}
               onChangeText={setStationLabel}
               style={styles.configInput}
               autoCapitalize="sentences"
               autoCorrect={false}
+              editable={settingsMandatory}
             />
 
-            <Pressable style={styles.modalCloseButton} onPress={() => setShowSettings(false)}>
-              <Text style={styles.modalCloseText}>Cerrar</Text>
-            </Pressable>
+            {configError ? <Text style={styles.configError}>{configError}</Text> : null}
+
+            {settingsMandatory ? (
+              <Pressable style={styles.modalSaveButton} onPress={saveConfiguration}>
+                <Text style={styles.modalSaveText}>Guardar y continuar</Text>
+              </Pressable>
+            ) : null}
+
+            {!settingsMandatory ? (
+              <Pressable style={styles.modalCloseButton} onPress={() => setShowSettings(false)}>
+                <Text style={styles.modalCloseText}>Cerrar</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </Modal>
@@ -439,17 +500,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.dotOffBorder,
   },
-  loadingWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginBottom: 10,
-  },
-  loadingText: {
-    color: COLORS.loading,
-    fontSize: 13,
-  },
   keypad: {
     gap: 10,
     flexDirection: 'row',
@@ -458,11 +508,11 @@ const styles = StyleSheet.create({
   },
   keyButton: {
     width: '31%',
-    backgroundColor: COLORS.keyBg,
-    borderColor: COLORS.keyBorder,
-    borderWidth: 1,
-    borderRadius: 12,
     paddingVertical: 18,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.keyBorder,
+    backgroundColor: COLORS.keyBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -476,78 +526,143 @@ const styles = StyleSheet.create({
   },
   secondaryKeyText: {
     color: COLORS.keySecondaryText,
-    fontWeight: '800',
     fontSize: 20,
+    fontWeight: '800',
+  },
+  loadingWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  loadingText: {
+    color: COLORS.loading,
+    fontSize: 13,
+  },
+  blockedNotice: {
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEE2E2',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  blockedNoticeTitle: {
+    color: '#991B1B',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  blockedNoticeText: {
+    color: '#7F1D1D',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  blockedNoticeButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FECACA',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  blockedNoticeButtonText: {
+    color: '#991B1B',
+    fontSize: 12,
+    fontWeight: '700',
   },
   loginSpacer: {
-    flexGrow: 1,
-    minHeight: 12,
+    flex: 1,
   },
   footerRow: {
-    marginTop: 8,
     alignItems: 'flex-start',
   },
   settingsButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: COLORS.gearBg,
+    width: 66,
+    height: 66,
+    borderRadius: 33,
     borderWidth: 1,
     borderColor: COLORS.gearBorder,
+    backgroundColor: COLORS.gearBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
   settingsIcon: {
     color: COLORS.gearText,
-    fontSize: 20,
+    fontSize: 30,
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+    backgroundColor: 'rgba(15,23,42,0.28)',
     justifyContent: 'center',
-    padding: 18,
+    paddingHorizontal: 24,
   },
   modalCard: {
     backgroundColor: COLORS.modalCard,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: COLORS.modalBorder,
-    padding: 16,
-    gap: 10,
+    padding: 18,
+    gap: 8,
   },
   modalTitle: {
     color: COLORS.modalTitle,
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 4,
+    fontSize: 24,
+    fontWeight: '800',
+    marginBottom: 6,
   },
   label: {
     color: COLORS.label,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
+    marginTop: 2,
   },
   configInput: {
     backgroundColor: COLORS.inputBg,
     borderColor: COLORS.inputBorder,
     borderWidth: 1,
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
     color: COLORS.inputText,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
     fontSize: 15,
   },
+  configError: {
+    color: COLORS.error,
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  modalSaveButton: {
+    marginTop: 10,
+    backgroundColor: '#0A8F5A',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#149B66',
+    paddingVertical: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSaveText: {
+    color: '#FFFFFF',
+    fontSize: 19,
+    fontWeight: '800',
+  },
   modalCloseButton: {
-    marginTop: 6,
+    marginTop: 8,
     backgroundColor: COLORS.closeBg,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: COLORS.closeBorder,
-    borderRadius: 10,
-    paddingVertical: 11,
+    paddingVertical: 12,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   modalCloseText: {
     color: COLORS.closeText,
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
   },
 });
