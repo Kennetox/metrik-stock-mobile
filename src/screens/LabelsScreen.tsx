@@ -36,6 +36,19 @@ type PrintPayload = {
 };
 type LabelsStep = 'search' | 'print';
 
+const DEFAULT_LABEL_FORMAT = 'Kensar1';
+const CABLES_LABEL_FORMAT = 'Cables_1';
+const LEGACY_KENSAR_FORMAT = 'Kensar';
+
+function normalizeLabelFormat(value: string | null | undefined): string {
+  const trimmed = (value || '').trim();
+  if (trimmed === LEGACY_KENSAR_FORMAT) return DEFAULT_LABEL_FORMAT;
+  if (trimmed === CABLES_LABEL_FORMAT || trimmed === DEFAULT_LABEL_FORMAT) {
+    return trimmed;
+  }
+  return DEFAULT_LABEL_FORMAT;
+}
+
 function normalizePrinterUrl(value: string): string {
   const raw = value.trim();
   if (!raw) return '';
@@ -164,8 +177,6 @@ export function LabelsScreen() {
     apiBase,
     printerDirectUrl,
     setPrinterDirectUrl,
-    labelFormat,
-    setLabelFormat,
   } = useAppSession();
 
   const [query, setQuery] = useState('');
@@ -179,7 +190,6 @@ export function LabelsScreen() {
   const [info, setInfo] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsUrl, setSettingsUrl] = useState(printerDirectUrl);
-  const [settingsFormat, setSettingsFormat] = useState(labelFormat || 'Kensar');
   const [probePrinting, setProbePrinting] = useState(false);
   const [printerStatus, setPrinterStatus] = useState<PrinterStatus>('checking');
   const [discoveringPrinters, setDiscoveringPrinters] = useState(false);
@@ -350,14 +360,12 @@ export function LabelsScreen() {
 
   function openSettings() {
     setSettingsUrl(printerDirectUrl);
-    setSettingsFormat(labelFormat || 'Kensar');
     setShowSettings(true);
   }
 
   function saveSettings() {
     const normalizedUrl = normalizePrinterUrl(settingsUrl);
     setPrinterDirectUrl(normalizedUrl);
-    setLabelFormat(settingsFormat.trim() || 'Kensar');
     setShowSettings(false);
     setInfo('Configuración guardada.');
     setError(null);
@@ -385,7 +393,7 @@ export function LabelsScreen() {
         BARRAS: barras,
         NOMBRE: selectedProduct.name,
         PRECIO: formatPriceText(selectedProduct.price),
-        format: (labelFormat || 'Kensar').trim() || 'Kensar',
+        format: normalizeLabelFormat(selectedProduct.label_format),
         copies: Math.max(1, Math.floor(qty)),
       },
     ];
@@ -412,7 +420,6 @@ export function LabelsScreen() {
     setError(null);
     setInfo(null);
     const target = normalizePrinterUrl(settingsUrl);
-    const formatValue = settingsFormat.trim() || 'Kensar';
     if (!target) {
       setError('Debes ingresar la URL de la impresora.');
       return;
@@ -425,7 +432,7 @@ export function LabelsScreen() {
           BARRAS: '3519',
           NOMBRE: 'Test Metrik Stock',
           PRECIO: '$22.000',
-          format: formatValue,
+          format: DEFAULT_LABEL_FORMAT,
           copies: 1,
         },
       ]);
@@ -596,16 +603,6 @@ export function LabelsScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               placeholder="http://10.10.20.19:8081"
-              placeholderTextColor="#64748b"
-            />
-            <Text style={styles.label}>Formato etiqueta</Text>
-            <TextInput
-              value={settingsFormat}
-              onChangeText={setSettingsFormat}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder="Kensar"
               placeholderTextColor="#64748b"
             />
 

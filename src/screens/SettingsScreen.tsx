@@ -16,8 +16,6 @@ export function SettingsScreen() {
     setPrinterDirectUrl,
     printerAgentUrl,
     setPrinterAgentUrl,
-    labelFormat,
-    setLabelFormat,
   } = useAppSession();
 
   return (
@@ -71,14 +69,6 @@ export function SettingsScreen() {
           autoCorrect={false}
         />
 
-        <Text style={styles.label}>Formato etiqueta</Text>
-        <TextInput
-          value={labelFormat}
-          onChangeText={setLabelFormat}
-          style={styles.input}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
       </View>
     </ScreenContainer>
   );

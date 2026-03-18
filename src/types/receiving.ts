@@ -118,4 +118,5 @@ export type ReceivingProductLookup = {
   name: string;
   price: number;
   cost: number;
+  label_format?: string | null;
 };

@@ -187,6 +187,29 @@ type ProductGroupOption = {
   parent_path?: string | null;
 };
 
+const DEFAULT_LABEL_FORMAT = 'Kensar1';
+const CABLES_LABEL_FORMAT = 'Cables_1';
+const LEGACY_KENSAR_FORMAT = 'Kensar';
+const LABEL_FORMAT_OPTIONS = [DEFAULT_LABEL_FORMAT, CABLES_LABEL_FORMAT] as const;
+
+type LabelFormatOption = (typeof LABEL_FORMAT_OPTIONS)[number];
+
+function resolveLabelFormatByGroup(groupPath: string): LabelFormatOption {
+  const normalized = (groupPath || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  return normalized.includes('cables') ? CABLES_LABEL_FORMAT : DEFAULT_LABEL_FORMAT;
+}
+
+function normalizeLabelFormat(value: string | null | undefined, groupPath: string): LabelFormatOption {
+  const trimmed = (value || '').trim();
+  if (trimmed === LEGACY_KENSAR_FORMAT) return DEFAULT_LABEL_FORMAT;
+  if (trimmed === CABLES_LABEL_FORMAT) return CABLES_LABEL_FORMAT;
+  if (trimmed === DEFAULT_LABEL_FORMAT) return DEFAULT_LABEL_FORMAT;
+  return resolveLabelFormatByGroup(groupPath);
+}
+
 export function LotDetailScreen({
   lotId,
   onBack,
@@ -196,7 +219,7 @@ export function LotDetailScreen({
   onBack: () => void;
   showInlineHeader?: boolean;
 }) {
-  const { apiClient, printerDirectUrl, labelFormat, syncStatus } = useAppSession();
+  const { apiClient, printerDirectUrl, syncStatus } = useAppSession();
   const [detail, setDetail] = useState<ReceivingLotDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -222,11 +245,14 @@ export function LotDetailScreen({
   const [newProductPrice, setNewProductPrice] = useState('');
   const [newProductCost, setNewProductCost] = useState('');
   const [newProductQty, setNewProductQty] = useState('1');
+  const [newProductLabelFormat, setNewProductLabelFormat] = useState<LabelFormatOption>(DEFAULT_LABEL_FORMAT);
+  const [newProductLabelFormatLocked, setNewProductLabelFormatLocked] = useState(true);
   const [creatingProduct, setCreatingProduct] = useState(false);
   const [loadingProductCodes, setLoadingProductCodes] = useState(false);
   const [productGroups, setProductGroups] = useState<ProductGroupOption[]>([]);
   const [loadingProductGroups, setLoadingProductGroups] = useState(false);
   const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [showLabelFormatPicker, setShowLabelFormatPicker] = useState(false);
   const [groupSearch, setGroupSearch] = useState('');
   const [selectedGroupPath, setSelectedGroupPath] = useState('');
   const [selectedGroupLabel, setSelectedGroupLabel] = useState('');
@@ -346,6 +372,7 @@ export function LotDetailScreen({
     barcodeSnapshot: string | null | undefined,
     productNameSnapshot: string,
     unitPriceSnapshot: number,
+    labelFormatSnapshot: string | null | undefined,
   ) {
     const maxForLine = Math.max(0, Math.ceil(Number(qtyReceived || 0)));
 
@@ -357,7 +384,7 @@ export function LotDetailScreen({
         BARRAS: barras,
         NOMBRE: productNameSnapshot || 'Producto',
         PRECIO: formatPriceLabelText(unitPriceSnapshot),
-        format: (labelFormat || 'Kensar').trim() || 'Kensar',
+        format: normalizeLabelFormat(labelFormatSnapshot, ''),
         copies: maxForLine,
       },
     ];
@@ -465,6 +492,9 @@ export function LotDetailScreen({
     setNewProductPrice('');
     setNewProductCost('');
     setNewProductQty(qtyInput || '1');
+    setNewProductLabelFormat(DEFAULT_LABEL_FORMAT);
+    setNewProductLabelFormatLocked(true);
+    setShowLabelFormatPicker(false);
     setGroupSearch('');
     setSelectedGroupPath('');
     setSelectedGroupLabel('');
@@ -496,7 +526,19 @@ export function LotDetailScreen({
     setShowCreateProductModal(false);
     setCreatingProduct(false);
     setLoadingProductCodes(false);
+    setShowLabelFormatPicker(false);
     setCreateProductError(null);
+  }
+
+  function toggleNewProductLabelFormatLock() {
+    setNewProductLabelFormatLocked((prev) => {
+      const nextLocked = !prev;
+      if (nextLocked) {
+        setNewProductLabelFormat(resolveLabelFormatByGroup(selectedGroupPath));
+        setShowLabelFormatPicker(false);
+      }
+      return nextLocked;
+    });
   }
 
   async function handleAddItem() {
@@ -569,6 +611,7 @@ export function LotDetailScreen({
         price,
         cost,
         group_name: selectedGroupPath,
+        label_format: normalizeLabelFormat(newProductLabelFormat, selectedGroupPath),
       });
       await addReceivingLotItem(apiClient, lotId, {
         product_id: created.id,
@@ -923,6 +966,7 @@ export function LotDetailScreen({
                               item.barcode_snapshot,
                               item.product_name_snapshot,
                               Number(item.unit_price_snapshot || 0),
+                              item.label_format_snapshot,
                             )
                           }
                           disabled={printingItemId === item.id}
@@ -1044,6 +1088,30 @@ export function LotDetailScreen({
                 {selectedGroupPath || selectedGroupLabel || 'Seleccionar grupo o subgrupo existente'}
               </Text>
             </Pressable>
+
+            <Text style={styles.modalLabel}>Formato etiqueta</Text>
+            <View style={styles.lockedFieldRow}>
+              <Pressable
+                style={[
+                  styles.groupSelectorButton,
+                  styles.lockedFieldInput,
+                  newProductLabelFormatLocked ? styles.inputReadonly : null,
+                ]}
+                onPress={() => {
+                  if (!newProductLabelFormatLocked) {
+                    setShowLabelFormatPicker(true);
+                  }
+                }}
+                disabled={newProductLabelFormatLocked}
+              >
+                <Text style={styles.groupSelectorText}>
+                  {normalizeLabelFormat(newProductLabelFormat, selectedGroupPath)}
+                </Text>
+              </Pressable>
+              <Pressable style={styles.lockButton} onPress={toggleNewProductLabelFormatLock}>
+                <Text style={styles.lockButtonText}>{newProductLabelFormatLocked ? '🔒' : '🔓'}</Text>
+              </Pressable>
+            </View>
             {createProductError ? <Text style={styles.modalError}>{createProductError}</Text> : null}
             {loadingProductGroups ? <ActivityIndicator color="#0A8F5A" /> : null}
 
@@ -1098,6 +1166,39 @@ export function LotDetailScreen({
       </Modal>
 
       <Modal
+        visible={showLabelFormatPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLabelFormatPicker(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Seleccionar formato</Text>
+            {LABEL_FORMAT_OPTIONS.map((option) => {
+              const selected = normalizeLabelFormat(newProductLabelFormat, selectedGroupPath) === option;
+              return (
+                <Pressable
+                  key={option}
+                  style={[styles.labelFormatOption, selected ? styles.labelFormatOptionSelected : null]}
+                  onPress={() => {
+                    setNewProductLabelFormat(option);
+                    setShowLabelFormatPicker(false);
+                  }}
+                >
+                  <Text style={styles.labelFormatOptionText}>{option}</Text>
+                </Pressable>
+              );
+            })}
+            <View style={styles.modalActions}>
+              <Pressable style={styles.cancelButton} onPress={() => setShowLabelFormatPicker(false)}>
+                <Text style={styles.cancelButtonText}>Cerrar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
         visible={showGroupPicker}
         transparent
         animationType="fade"
@@ -1125,6 +1226,9 @@ export function LotDetailScreen({
                       onPress={() => {
                         setSelectedGroupPath(group.path);
                         setSelectedGroupLabel(group.display_name);
+                        if (newProductLabelFormatLocked) {
+                          setNewProductLabelFormat(resolveLabelFormatByGroup(group.path));
+                        }
                         setCreateProductError(null);
                         setShowGroupPicker(false);
                       }}
@@ -1374,6 +1478,30 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '600',
   },
+  lockedFieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  lockedFieldInput: {
+    flex: 1,
+  },
+  inputReadonly: {
+    opacity: 0.7,
+  },
+  lockButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#EEF3F9',
+    borderColor: '#B7C4D5',
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockButtonText: {
+    fontSize: 16,
+  },
   modalError: {
     color: '#be123c',
     fontSize: 13,
@@ -1567,6 +1695,22 @@ const styles = StyleSheet.create({
   groupItemMeta: {
     color: '#475569',
     fontSize: 11,
+  },
+  labelFormatOption: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#B7C4D5',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  labelFormatOptionSelected: {
+    borderColor: '#67C48D',
+    backgroundColor: '#E7F5EC',
+  },
+  labelFormatOptionText: {
+    color: '#0F172A',
+    fontWeight: '700',
   },
   itemsSection: {
     marginTop: 12,

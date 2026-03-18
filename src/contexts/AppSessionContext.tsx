@@ -31,8 +31,6 @@ type AppSessionValue = {
   setPrinterDirectUrl: (value: string) => void;
   printerAgentUrl: string;
   setPrinterAgentUrl: (value: string) => void;
-  labelFormat: string;
-  setLabelFormat: (value: string) => void;
   tabletEmail: string;
   setTabletEmail: (value: string) => void;
   token: string | null;
@@ -99,7 +97,6 @@ type PersistedAppSession = {
   stockDeviceId?: string;
   printerDirectUrl?: string;
   printerAgentUrl?: string;
-  labelFormat?: string;
   tabletEmail?: string;
   token?: string | null;
   user?: AuthUser | null;
@@ -114,7 +111,6 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
   const [stockDeviceId, setStockDeviceId] = useState('');
   const [printerDirectUrl, setPrinterDirectUrl] = useState(DEFAULT_PRINTER_DIRECT_URL);
   const [printerAgentUrl, setPrinterAgentUrl] = useState(DEFAULT_PRINTER_AGENT_URL);
-  const [labelFormat, setLabelFormat] = useState('Kensar');
   const [tabletEmail, setTabletEmail] = useState('');
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -200,9 +196,6 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
         if (persisted.printerAgentUrl) {
           setPrinterAgentUrl(persisted.printerAgentUrl);
         }
-        if (persisted.labelFormat) {
-          setLabelFormat(persisted.labelFormat);
-        }
         if (persisted.tabletEmail) {
           setTabletEmail(persisted.tabletEmail);
         }
@@ -238,7 +231,6 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
       stockDeviceId,
       printerDirectUrl,
       printerAgentUrl,
-      labelFormat,
       tabletEmail,
       token,
       user,
@@ -248,7 +240,6 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
     apiBase,
     isHydrated,
     isInitialSetupComplete,
-    labelFormat,
     tabletEmail,
     printerAgentUrl,
     printerDirectUrl,
@@ -424,8 +415,6 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
       setPrinterDirectUrl,
       printerAgentUrl,
       setPrinterAgentUrl,
-      labelFormat,
-      setLabelFormat,
       tabletEmail,
       setTabletEmail,
       token,
@@ -448,7 +437,6 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
       isHydrated,
       isInitialSetupComplete,
       completeInitialSetup,
-      labelFormat,
       tabletEmail,
       stationId,
       stationLabel,

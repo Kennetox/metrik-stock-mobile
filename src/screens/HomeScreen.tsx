@@ -51,7 +51,6 @@ export function HomeScreen() {
     stationLabel,
     stockDeviceId,
     printerDirectUrl,
-    labelFormat,
   } = useAppSession();
   const [tab, setTab] = useState<TabKey>('lots');
   const [visitedTabs, setVisitedTabs] = useState<Record<TabKey, boolean>>({
@@ -183,7 +182,6 @@ export function HomeScreen() {
               stationLabel={stationLabel}
               stockDeviceId={stockDeviceId}
               printerDirectUrl={printerDirectUrl}
-              labelFormat={labelFormat}
               syncLabel={syncMeta.label}
               syncColor={syncMeta.color}
               lastSyncText={lastSyncText}
@@ -420,7 +418,6 @@ function ProfilePanel({
   stationLabel,
   stockDeviceId,
   printerDirectUrl,
-  labelFormat,
   syncLabel,
   syncColor,
   lastSyncText,
@@ -437,7 +434,6 @@ function ProfilePanel({
   stationLabel: string;
   stockDeviceId: string;
   printerDirectUrl: string;
-  labelFormat: string;
   syncLabel: string;
   syncColor: string;
   lastSyncText: string;
@@ -533,7 +529,6 @@ function ProfilePanel({
           <Text style={styles.profileLineSmall} numberOfLines={1}>
             Impresora: {printerDirectUrl}
           </Text>
-          <Text style={styles.profileLineSmall}>Formato: {labelFormat || 'Kensar'}</Text>
         </View>
 
         <View style={styles.profileCard}>

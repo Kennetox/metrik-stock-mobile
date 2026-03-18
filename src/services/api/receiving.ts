@@ -155,6 +155,7 @@ export async function createReceivingProductQuick(
     price: number;
     cost?: number;
     group_name: string;
+    label_format?: string;
     brand?: string;
     supplier?: string;
   },
@@ -164,6 +165,7 @@ export async function createReceivingProductQuick(
     price: payload.price,
     cost: payload.cost,
     group_name: payload.group_name,
+    label_format: payload.label_format,
     brand: payload.brand,
     supplier: payload.supplier,
   });
