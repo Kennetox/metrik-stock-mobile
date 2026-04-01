@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 
 import { useAppSession } from '../contexts/AppSessionContext';
-import { searchReceivingProducts } from '../services/api/receiving';
+import { searchReceivingProductsAll } from '../services/api/receiving';
 import {
   checkEndpointNative,
   discoverPrintersNative,
@@ -314,7 +314,7 @@ export function LabelsScreen() {
 
     const timer = setTimeout(() => {
       setSearching(true);
-      searchReceivingProducts(apiClient, term, 35)
+      searchReceivingProductsAll(apiClient, term)
         .then((items) => {
           if (!active) return;
           setRawResults(items);

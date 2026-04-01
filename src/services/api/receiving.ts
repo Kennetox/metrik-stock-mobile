@@ -52,11 +52,39 @@ export async function searchReceivingProducts(
   client: ReturnTypeCreateApiClient,
   q: string,
   limit = 20,
+  skip = 0,
 ): Promise<ReceivingProductLookup[]> {
   const params = new URLSearchParams();
   params.set('q', q);
   params.set('limit', String(limit));
+  params.set('skip', String(skip));
   return client.get<ReceivingProductLookup[]>(`/receiving/products/search?${params.toString()}`);
+}
+
+export async function searchReceivingProductsAll(
+  client: ReturnTypeCreateApiClient,
+  q: string,
+): Promise<ReceivingProductLookup[]> {
+  const term = q.trim();
+  if (!term) return [];
+
+  const pageSize = 100;
+  let skip = 0;
+  const rows: ReceivingProductLookup[] = [];
+  const seenIds = new Set<number>();
+
+  while (true) {
+    const batch = await searchReceivingProducts(client, term, pageSize, skip);
+    for (const item of batch) {
+      if (seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+      rows.push(item);
+    }
+    if (batch.length < pageSize) break;
+    skip += pageSize;
+  }
+
+  return rows;
 }
 
 export async function addReceivingLotItem(

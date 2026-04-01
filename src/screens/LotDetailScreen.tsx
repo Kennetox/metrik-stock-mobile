@@ -22,7 +22,7 @@ import {
   getReceivingNextProductCodes,
   getLotDetail,
   listReceivingProductGroups,
-  searchReceivingProducts,
+  searchReceivingProductsAll,
   updateReceivingLotItem,
 } from '../services/api/receiving';
 import type { ReceivingLotDetail, ReceivingProductLookup } from '../types/receiving';
@@ -439,7 +439,7 @@ export function LotDetailScreen({
     let active = true;
     const timer = setTimeout(() => {
       setSearching(true);
-      searchReceivingProducts(apiClient, term, 35)
+      searchReceivingProductsAll(apiClient, term)
         .then((results) => {
           if (active) {
             setRawResults(results);
