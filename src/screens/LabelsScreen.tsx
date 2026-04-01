@@ -314,7 +314,7 @@ export function LabelsScreen() {
 
     const timer = setTimeout(() => {
       setSearching(true);
-      searchReceivingProductsAll(apiClient, term)
+      searchReceivingProductsAll(apiClient, term, { includeInactive: true })
         .then((items) => {
           if (!active) return;
           setRawResults(items);

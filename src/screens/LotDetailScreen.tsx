@@ -439,7 +439,7 @@ export function LotDetailScreen({
     let active = true;
     const timer = setTimeout(() => {
       setSearching(true);
-      searchReceivingProductsAll(apiClient, term)
+      searchReceivingProductsAll(apiClient, term, { includeInactive: true })
         .then((results) => {
           if (active) {
             setRawResults(results);

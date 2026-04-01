@@ -29,6 +29,7 @@ export type ReceivingLotItem = {
   product_name_snapshot: string;
   sku_snapshot?: string | null;
   barcode_snapshot?: string | null;
+  label_format_snapshot?: string | null;
   qty_received: number;
   unit_cost_snapshot: number;
   unit_price_snapshot: number;

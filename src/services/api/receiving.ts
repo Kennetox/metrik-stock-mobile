@@ -53,17 +53,22 @@ export async function searchReceivingProducts(
   q: string,
   limit = 20,
   skip = 0,
+  includeInactive = false,
 ): Promise<ReceivingProductLookup[]> {
   const params = new URLSearchParams();
   params.set('q', q);
   params.set('limit', String(limit));
   params.set('skip', String(skip));
+  if (includeInactive) params.set('include_inactive', 'true');
   return client.get<ReceivingProductLookup[]>(`/receiving/products/search?${params.toString()}`);
 }
 
 export async function searchReceivingProductsAll(
   client: ReturnTypeCreateApiClient,
   q: string,
+  options?: {
+    includeInactive?: boolean;
+  },
 ): Promise<ReceivingProductLookup[]> {
   const term = q.trim();
   if (!term) return [];
@@ -74,7 +79,13 @@ export async function searchReceivingProductsAll(
   const seenIds = new Set<number>();
 
   while (true) {
-    const batch = await searchReceivingProducts(client, term, pageSize, skip);
+    const batch = await searchReceivingProducts(
+      client,
+      term,
+      pageSize,
+      skip,
+      options?.includeInactive ?? false,
+    );
     for (const item of batch) {
       if (seenIds.has(item.id)) continue;
       seenIds.add(item.id);
