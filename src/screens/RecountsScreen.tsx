@@ -25,7 +25,7 @@ import {
   listRecounts,
   upsertRecountLine,
 } from '../services/api/recounts';
-import { listReceivingProductGroups, searchReceivingProducts } from '../services/api/receiving';
+import { listReceivingProductGroups, resolveReceivingProductByBarcode, searchReceivingProducts } from '../services/api/receiving';
 import type { RecountDetail, RecountLine, RecountRecord, RecountStatus } from '../types/recounts';
 import { ScreenContainer } from '../ui/ScreenContainer';
 
@@ -61,7 +61,17 @@ function statusLabel(status: RecountStatus) {
 }
 
 function normalizeBarcode(value?: string | null): string {
-  return (value ?? '').replace(/\s+/g, '').trim().toLowerCase();
+  const compact = (value ?? '')
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\s+/g, '')
+    .trim()
+    .toLowerCase();
+  // AIM symbology identifier prefix, e.g. ]C1 / ]E0
+  if (/^\][a-z0-9]{2}/.test(compact)) {
+    return compact.slice(3);
+  }
+  return compact;
 }
 
 function belongsToStockDevice(stockDeviceId: string, candidate?: string | null): boolean {
@@ -405,16 +415,7 @@ export function RecountsScreen({
       if (match) {
         await incrementLineByOne(match);
       } else {
-        const products = await searchReceivingProducts(apiClient, scanned, 25);
-        const normalizedScanned = normalizeBarcode(scanned);
-        const normalizedNoZeros = normalizedScanned.replace(/^0+/, '');
-        const picked = products.find((item) => {
-          const barcode = normalizeBarcode(item.barcode);
-          return (
-            barcode === normalizedScanned ||
-            barcode.replace(/^0+/, '') === normalizedNoZeros
-          );
-        });
+        const picked = await resolveReceivingProductByBarcode(apiClient, scanned);
 
         if (!picked) {
           const message = `No se encontró producto para el código de barras ${rawCode}.`;

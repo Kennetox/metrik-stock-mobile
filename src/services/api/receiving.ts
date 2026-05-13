@@ -63,6 +63,19 @@ export async function searchReceivingProducts(
   return client.get<ReceivingProductLookup[]>(`/receiving/products/search?${params.toString()}`);
 }
 
+export async function resolveReceivingProductByBarcode(
+  client: ReturnTypeCreateApiClient,
+  code: string,
+  options?: {
+    includeInactive?: boolean;
+  },
+): Promise<ReceivingProductLookup | null> {
+  const params = new URLSearchParams();
+  params.set('code', code);
+  if (options?.includeInactive) params.set('include_inactive', 'true');
+  return client.get<ReceivingProductLookup | null>(`/receiving/products/resolve-by-barcode?${params.toString()}`);
+}
+
 export async function searchReceivingProductsAll(
   client: ReturnTypeCreateApiClient,
   q: string,
