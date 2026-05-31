@@ -171,8 +171,34 @@ function rankProduct(product: ReceivingProductLookup, rawQuery: string) {
   return 10;
 }
 
+function normalizeSearchText(value: string) {
+  return (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchesAllQueryTokens(product: ReceivingProductLookup, rawQuery: string) {
+  const normalizedQuery = normalizeSearchText(rawQuery);
+  if (!normalizedQuery) return true;
+  const tokens = normalizedQuery.split(' ').filter(Boolean);
+  if (!tokens.length) return true;
+
+  const haystack = normalizeSearchText(
+    `${product.name || ''} ${product.sku || ''} ${product.barcode || ''}`,
+  );
+  if (!haystack) return false;
+
+  return tokens.every((token) => haystack.includes(token));
+}
+
 function sortProductResults(items: ReceivingProductLookup[], rawQuery: string) {
-  return [...items].sort((a, b) => {
+  return [...items]
+    .filter((item) => matchesAllQueryTokens(item, rawQuery))
+    .sort((a, b) => {
     const rankA = rankProduct(a, rawQuery);
     const rankB = rankProduct(b, rawQuery);
     if (rankA !== rankB) return rankA - rankB;
@@ -440,8 +466,28 @@ export function LotDetailScreen({
     const timer = setTimeout(() => {
       setSearching(true);
       searchReceivingProductsAll(apiClient, term, { includeInactive: true })
-        .then((results) => {
+        .then(async (results) => {
           if (active) {
+            if (results.length > 0) {
+              setRawResults(results);
+              return;
+            }
+
+            const normalizedTerm = normalizeSearchText(term);
+            const tokens = normalizedTerm.split(' ').filter(Boolean);
+            if (tokens.length >= 2) {
+              const fallbackSeed = tokens[0];
+              if (fallbackSeed.length >= 2) {
+                const fallbackResults = await searchReceivingProductsAll(apiClient, fallbackSeed, {
+                  includeInactive: true,
+                });
+                if (active) {
+                  setRawResults(fallbackResults);
+                  return;
+                }
+              }
+            }
+
             setRawResults(results);
           }
         })
