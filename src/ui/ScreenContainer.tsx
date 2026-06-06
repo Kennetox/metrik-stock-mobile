@@ -25,6 +25,7 @@ export function ScreenContainer({
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        nestedScrollEnabled
       >
         <View style={styles.content}>{children}</View>
       </ScrollView>
@@ -41,6 +42,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   content: {
+    flexGrow: 1,
     padding: 16,
     gap: 14,
   },

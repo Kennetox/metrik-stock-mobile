@@ -60,22 +60,11 @@ export async function tabletLogin(
       device_label: payload.device_label,
     });
   } catch (error) {
-    // Backward compatibility: some deployments may still expose only tablet/pos routes.
     if (error instanceof ApiError && error.status === 404) {
-      if (!payload.station_id) {
-        throw new ApiError(
-          'El backend no tiene login de Metrik Stock activo y falta station_id de compatibilidad.',
-          400,
-        );
-      }
-      try {
-        return await client.post<LoginResponse>('/auth/tablet-login', payload);
-      } catch (tabletError) {
-        if (tabletError instanceof ApiError && tabletError.status === 404) {
-          return client.post<LoginResponse>('/auth/pos-login', payload);
-        }
-        throw tabletError;
-      }
+      throw new ApiError(
+        'El backend local no expone /auth/mobile-stock-login. Verifica que estés corriendo el proceso correcto de Kensar Backend.',
+        404,
+      );
     }
     throw error;
   }
@@ -90,18 +79,11 @@ export async function tabletEmailCheck(
       email: payload.email,
     });
   } catch (error) {
-    // Backward compatibility for older backends that still use tablet endpoint.
     if (error instanceof ApiError && error.status === 404) {
-      if (!payload.station_id) {
-        throw new ApiError(
-          'El backend no tiene validación de correo para Metrik Stock activa y falta station_id de compatibilidad.',
-          400,
-        );
-      }
-      return client.post<TabletEmailCheckResponse>('/auth/tablet-email-check', {
-        station_id: payload.station_id,
-        email: payload.email,
-      });
+      throw new ApiError(
+        'El backend local no expone /auth/mobile-stock-email-check. Verifica que estés corriendo el proceso correcto de Kensar Backend.',
+        404,
+      );
     }
     throw error;
   }

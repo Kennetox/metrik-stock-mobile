@@ -136,6 +136,16 @@ export function createApiClient(config: ApiClientConfig) {
             : JSON.stringify(body)
           : undefined,
       }),
+    put: <T>(path: string, body?: unknown, init?: RequestInit) =>
+      request<T>(path, {
+        ...init,
+        method: 'PUT',
+        body: body
+          ? body instanceof FormData
+            ? body
+            : JSON.stringify(body)
+          : undefined,
+      }),
     del: <T>(path: string) =>
       request<T>(path, {
         method: 'DELETE',

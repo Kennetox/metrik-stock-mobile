@@ -10,9 +10,10 @@ import { HistoryScreen } from './HistoryScreen';
 import { LabelsScreen } from './LabelsScreen';
 import { LotDetailScreen } from './LotDetailScreen';
 import { LotsScreen } from './LotsScreen';
+import { ProductsScreen } from './ProductsScreen';
 import { RecountsScreen } from './RecountsScreen';
 
-type TabKey = 'lots' | 'recounts' | 'labels' | 'history' | 'profile';
+type TabKey = 'lots' | 'recounts' | 'labels' | 'products' | 'history' | 'profile';
 
 const COLORS = {
   pageBg: '#E9EDF3',
@@ -57,6 +58,7 @@ export function HomeScreen() {
     lots: true,
     recounts: false,
     labels: false,
+    products: false,
     history: false,
     profile: false,
   });
@@ -67,12 +69,17 @@ export function HomeScreen() {
   const [refreshingSync, setRefreshingSync] = useState(false);
   const inLotWorkspace = selectedLotId !== null;
   const inRecountWorkspace = tab === 'recounts' && recountWorkspaceOpen;
+  const isProductsTab = tab === 'products';
   const hideBottomNav = inLotWorkspace || inRecountWorkspace;
   const showTopBackButton = inLotWorkspace || inRecountWorkspace;
   const bottomInset = Math.max(insets.bottom, 10);
   const topInset = Math.max(insets.top, 8);
   const navReservedSpace = 84 + bottomInset;
-  const contentBottomPadding = hideBottomNav ? 12 + bottomInset : navReservedSpace;
+  const contentBottomPadding = hideBottomNav
+    ? 12 + bottomInset
+    : isProductsTab
+      ? 24 + bottomInset
+      : navReservedSpace;
 
   const syncMeta = getSyncMeta(syncStatus);
   const lastSyncText = lastSyncAt ? formatDateTime(lastSyncAt) : 'Sin sincronización confirmada';
@@ -157,6 +164,12 @@ export function HomeScreen() {
           </View>
         ) : null}
 
+        {visitedTabs.products ? (
+          <View style={[styles.tabScene, tab === 'products' ? null : styles.tabSceneHidden]}>
+            <ProductsScreen />
+          </View>
+        ) : null}
+
         {visitedTabs.recounts ? (
           <View style={[styles.tabScene, tab === 'recounts' ? null : styles.tabSceneHidden]}>
             <RecountsScreen
@@ -201,6 +214,7 @@ export function HomeScreen() {
             <BottomTabButton icon="home" active={tab === 'lots'} onPress={() => handleSelectTab('lots')} />
             <BottomTabButton icon="count" active={tab === 'recounts'} onPress={() => handleSelectTab('recounts')} />
             <BottomTabButton icon="tag" active={tab === 'labels'} onPress={() => handleSelectTab('labels')} />
+            <BottomTabButton icon="box" active={tab === 'products'} onPress={() => handleSelectTab('products')} />
             <BottomTabButton icon="report" active={tab === 'history'} onPress={() => handleSelectTab('history')} />
             <BottomTabButton icon="profile" active={tab === 'profile'} onPress={() => handleSelectTab('profile')} />
           </View>
@@ -311,7 +325,7 @@ function BottomTabButton({
   active,
   onPress,
 }: {
-  icon: 'home' | 'count' | 'tag' | 'report' | 'profile';
+  icon: 'home' | 'count' | 'tag' | 'box' | 'report' | 'profile';
   active: boolean;
   onPress: () => void;
 }) {
@@ -326,7 +340,7 @@ function BottomTabButton({
   );
 }
 
-function NavIcon({ name, color }: { name: 'home' | 'count' | 'tag' | 'report' | 'profile'; color: string }) {
+function NavIcon({ name, color }: { name: 'home' | 'count' | 'tag' | 'box' | 'report' | 'profile'; color: string }) {
   const strokeWidth = 1.9;
 
   if (name === 'home') {
@@ -358,6 +372,21 @@ function NavIcon({ name, color }: { name: 'home' | 'count' | 'tag' | 'report' | 
           stroke={color}
           strokeWidth={1.6}
         />
+      </Svg>
+    );
+  }
+
+  if (name === 'box') {
+    return (
+      <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+        <Path
+          d="M4.5 8.2L12 4.5L19.5 8.2V16.1L12 19.5L4.5 16.1V8.2Z"
+          stroke={color}
+          strokeWidth={1.8}
+          strokeLinejoin="round"
+        />
+        <Path d="M12 4.5V11.9" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+        <Path d="M4.8 8.1L12 11.9L19.2 8.1" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
       </Svg>
     );
   }
