@@ -25,6 +25,13 @@ import {
   searchReceivingProductsAll,
   updateReceivingLotItem,
 } from '../services/api/receiving';
+import {
+  getProductCostSuggestion,
+  getProductDuplicateCandidates,
+  type ProductDuplicateCandidatesResponse,
+  type ProductCostSuggestionResponse,
+  type ProductDuplicateCandidate,
+} from '../services/api/products';
 import type { ReceivingLotDetail, ReceivingProductLookup } from '../types/receiving';
 import { ScreenContainer } from '../ui/ScreenContainer';
 
@@ -283,6 +290,12 @@ export function LotDetailScreen({
   const [selectedGroupPath, setSelectedGroupPath] = useState('');
   const [selectedGroupLabel, setSelectedGroupLabel] = useState('');
   const [createProductError, setCreateProductError] = useState<string | null>(null);
+  const [duplicateCandidates, setDuplicateCandidates] = useState<ProductDuplicateCandidate[]>([]);
+  const [duplicateChecking, setDuplicateChecking] = useState(false);
+  const [hasHighDuplicateRisk, setHasHighDuplicateRisk] = useState(false);
+  const [costSuggestion, setCostSuggestion] = useState<ProductCostSuggestionResponse | null>(null);
+  const [costChecking, setCostChecking] = useState(false);
+  const [costMode] = useState<'balanced' | 'conservative' | 'aggressive'>('balanced');
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const canMutate = syncStatus === 'online' || syncStatus === 'degraded';
 
@@ -390,6 +403,57 @@ export function LotDetailScreen({
       : '';
     return `Al cerrar, el lote ya no se podrá editar.${pendingNotice}${warningBlock}\n\n¿Deseas continuar?`;
   }, [detail, localWarnings, pendingLabels]);
+
+  const checkDuplicates = useCallback(async (): Promise<ProductDuplicateCandidatesResponse> => {
+    const name = newProductName.trim();
+    if (!name) {
+      setDuplicateCandidates([]);
+      setHasHighDuplicateRisk(false);
+      return { candidates: [], has_high_risk: false };
+    }
+    setDuplicateChecking(true);
+    try {
+      const response = await getProductDuplicateCandidates(apiClient, {
+        name,
+        sku: previewSku.trim() || null,
+        barcode: previewBarcode.trim() || null,
+        group_name: selectedGroupPath.trim() || null,
+        limit: 6,
+      });
+      setDuplicateCandidates(response.candidates);
+      setHasHighDuplicateRisk(response.has_high_risk && response.candidates.length > 0);
+      return response;
+    } catch (err) {
+      setCreateProductError(err instanceof Error ? err.message : 'No se pudieron revisar duplicados');
+      return { candidates: [], has_high_risk: false };
+    } finally {
+      setDuplicateChecking(false);
+    }
+  }, [apiClient, newProductName, previewBarcode, previewSku, selectedGroupPath]);
+
+  async function suggestCost() {
+    const price = parseMoneyInput(newProductPrice);
+    if (!Number.isFinite(price) || price <= 0) {
+      setCreateProductError('Ingresa un precio válido para sugerir costo.');
+      return;
+    }
+    setCostChecking(true);
+    setCreateProductError(null);
+    try {
+      const response = await getProductCostSuggestion(apiClient, {
+        mode: costMode,
+        price,
+        group_name: selectedGroupPath.trim() || null,
+        exclude_product_id: null,
+      });
+      setCostSuggestion(response);
+      setNewProductCost(String(Math.round(response.suggested_cost)));
+    } catch (err) {
+      setCreateProductError(err instanceof Error ? err.message : 'No se pudo sugerir costo');
+    } finally {
+      setCostChecking(false);
+    }
+  }
 
   async function handleMockPrintLabel(
     itemId: number,
@@ -532,6 +596,9 @@ export function LotDetailScreen({
     if (!ensureCanMutate()) return;
     setError(null);
     setCreateProductError(null);
+    setDuplicateCandidates([]);
+    setHasHighDuplicateRisk(false);
+    setCostSuggestion(null);
     setNewProductName(productQuery.trim());
     setPreviewSku('');
     setPreviewBarcode('');
@@ -574,6 +641,11 @@ export function LotDetailScreen({
     setLoadingProductCodes(false);
     setShowLabelFormatPicker(false);
     setCreateProductError(null);
+    setDuplicateCandidates([]);
+    setHasHighDuplicateRisk(false);
+    setCostSuggestion(null);
+    setDuplicateChecking(false);
+    setCostChecking(false);
   }
 
   function toggleNewProductLabelFormatLock() {
@@ -652,6 +724,26 @@ export function LotDetailScreen({
 
     setCreatingProduct(true);
     try {
+      if (duplicateCandidates.length === 0) {
+        const duplicateResponse = await checkDuplicates();
+        if (duplicateResponse.candidates.length > 0) {
+          const top = duplicateResponse.candidates[0];
+          const proceed = await new Promise<boolean>((resolve) => {
+            Alert.alert(
+              duplicateResponse.has_high_risk ? 'Riesgo alto de duplicado' : 'Posible duplicado',
+              `Detectamos coincidencias con "${top.name}"${top.sku ? ` (SKU ${top.sku})` : ''}.`,
+              [
+                { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+                { text: 'Guardar igual', style: 'destructive', onPress: () => resolve(true) },
+              ],
+            );
+          });
+          if (!proceed) {
+            setCreatingProduct(false);
+            return;
+          }
+        }
+      }
       const created = await createReceivingProductQuick(apiClient, {
         name,
         price,
@@ -1090,7 +1182,7 @@ export function LotDetailScreen({
               placeholderTextColor="#64748b"
             />
 
-            <Text style={styles.modalLabel}>Precio venta *</Text>
+              <Text style={styles.modalLabel}>Precio venta *</Text>
             <TextInput
               value={newProductPrice}
               onChangeText={(value) => setNewProductPrice(formatMoneyInput(value))}
@@ -1109,6 +1201,67 @@ export function LotDetailScreen({
               placeholder="Opcional"
               placeholderTextColor="#64748b"
             />
+
+            <View style={styles.createHelpersRow}>
+              <Pressable
+                style={[styles.createHelperButton, duplicateChecking ? styles.actionDisabled : null]}
+                onPress={() => {
+                  checkDuplicates().catch(() => undefined);
+                }}
+                disabled={duplicateChecking}
+              >
+                {duplicateChecking ? (
+                  <ActivityIndicator size="small" color="#0A8F5A" />
+                ) : (
+                  <Text style={styles.createHelperButtonText}>Buscar duplicados</Text>
+                )}
+              </Pressable>
+              <Pressable
+                style={[styles.createHelperButton, costChecking ? styles.actionDisabled : null]}
+                onPress={() => {
+                  suggestCost().catch(() => undefined);
+                }}
+                disabled={costChecking}
+              >
+                {costChecking ? (
+                  <ActivityIndicator size="small" color="#0A8F5A" />
+                ) : (
+                  <Text style={styles.createHelperButtonText}>Sugerir costo</Text>
+                )}
+              </Pressable>
+            </View>
+
+            {duplicateCandidates.length > 0 ? (
+              <View style={styles.duplicateCard}>
+                <Text style={styles.alertTitle}>
+                  {hasHighDuplicateRisk ? 'Posible duplicado de riesgo alto' : 'Posibles duplicados'}
+                </Text>
+                {duplicateCandidates.slice(0, 3).map((candidate) => (
+                  <View key={candidate.product_id} style={styles.duplicateRow}>
+                    <Text style={styles.duplicateName}>{candidate.name}</Text>
+                    <Text style={styles.duplicateMeta}>
+                      {candidate.sku ? `SKU ${candidate.sku}` : 'Sin SKU'} · {Math.round(candidate.similarity_score * 100)}%
+                    </Text>
+                    {candidate.match_reasons.length > 0 ? (
+                      <Text style={styles.duplicateReasons}>{candidate.match_reasons.slice(0, 2).join(' · ')}</Text>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            {costSuggestion ? (
+              <View style={styles.costCard}>
+                <Text style={styles.alertTitle}>Costo sugerido</Text>
+                <Text style={styles.costValue}>{formatCurrency(costSuggestion.suggested_cost)}</Text>
+                <Text style={styles.costMeta}>
+                  Confianza {costSuggestion.confidence_label} · {Math.round(costSuggestion.confidence_score * 100)}%
+                </Text>
+                <Text style={styles.costMeta}>
+                  Rango {formatCurrency(costSuggestion.range_min_cost)} - {formatCurrency(costSuggestion.range_max_cost)}
+                </Text>
+              </View>
+            ) : null}
 
             <Text style={styles.modalLabel}>SKU (autoasignado)</Text>
             <TextInput
@@ -1552,6 +1705,73 @@ const styles = StyleSheet.create({
     color: '#be123c',
     fontSize: 13,
     marginTop: -2,
+  },
+  alertTitle: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  createHelpersRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  createHelperButton: {
+    flex: 1,
+    minHeight: 44,
+    backgroundColor: '#F8FAFC',
+    borderColor: '#9ED9B3',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  createHelperButtonText: {
+    color: '#0A8F5A',
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  duplicateCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    backgroundColor: '#FFF7D6',
+    padding: 12,
+    gap: 6,
+  },
+  duplicateRow: {
+    gap: 2,
+    paddingVertical: 4,
+  },
+  duplicateName: {
+    color: '#0F172A',
+    fontWeight: '700',
+  },
+  duplicateMeta: {
+    color: '#7C2D12',
+    fontSize: 12,
+  },
+  duplicateReasons: {
+    color: '#92400E',
+    fontSize: 12,
+  },
+  costCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#9ED9B3',
+    backgroundColor: '#ECFDF3',
+    padding: 12,
+    gap: 4,
+  },
+  costValue: {
+    color: '#0A8F5A',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  costMeta: {
+    color: '#065F46',
+    fontSize: 12,
   },
   helperRow: {
     flexDirection: 'row',

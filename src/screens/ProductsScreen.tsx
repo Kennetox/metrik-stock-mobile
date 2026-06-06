@@ -17,7 +17,6 @@ import { useAppSession } from '../contexts/AppSessionContext';
 import { ScreenContainer } from '../ui/ScreenContainer';
 import {
   createProduct,
-  deleteProduct,
   getProductCostSuggestion,
   getProductDuplicateCandidates,
   listProductGroups,
@@ -200,7 +199,7 @@ function buildPayload(form: ProductFormState, options?: { autoGenerateCodes?: bo
 }
 
 export function ProductsScreen() {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const { apiClient, syncStatus } = useAppSession();
   const [products, setProducts] = useState<Product[]>([]);
   const [groups, setGroups] = useState<ProductGroup[]>([]);
@@ -226,7 +225,6 @@ export function ProductsScreen() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ProductFormState>(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [duplicateCandidates, setDuplicateCandidates] = useState<ProductDuplicateCandidate[]>([]);
   const [hasHighDuplicateRisk, setHasHighDuplicateRisk] = useState(false);
@@ -241,6 +239,9 @@ export function ProductsScreen() {
   const isTableMode = viewMode === 'table';
   const isCompactHeader = width < 420;
   const isCompactLayout = width < 520;
+  const tableViewportHeight = isCompactLayout
+    ? Math.max(260, Math.min(380, Math.round(height * 0.34)))
+    : Math.max(300, Math.min(520, Math.round(height * 0.42)));
   const hasAdvancedFilters =
     activeFilter !== 'all' ||
     Boolean(groupFilter.trim()) ||
@@ -543,22 +544,24 @@ export function ProductsScreen() {
     setSaving(true);
     setFormMessage(null);
     try {
-      const duplicatedRows = await checkDuplicates(form);
-      if (duplicatedRows.length > 0) {
-        const top = duplicatedRows[0];
-        const proceed = await new Promise<boolean>((resolve) => {
-          Alert.alert(
-            hasHighDuplicateRisk ? 'Riesgo alto de duplicado' : 'Posible duplicado',
-            `Detectamos coincidencias con "${top.name}"${top.sku ? ` (SKU ${top.sku})` : ''}.`,
-            [
-              { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Guardar igual', style: 'destructive', onPress: () => resolve(true) },
-            ],
-          );
-        });
-        if (!proceed) {
-          setSaving(false);
-          return;
+      if (formMode === 'create') {
+        const duplicatedRows = await checkDuplicates(form);
+        if (duplicatedRows.length > 0) {
+          const top = duplicatedRows[0];
+          const proceed = await new Promise<boolean>((resolve) => {
+            Alert.alert(
+              hasHighDuplicateRisk ? 'Riesgo alto de duplicado' : 'Posible duplicado',
+              `Detectamos coincidencias con "${top.name}"${top.sku ? ` (SKU ${top.sku})` : ''}.`,
+              [
+                { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+                { text: 'Guardar igual', style: 'destructive', onPress: () => resolve(true) },
+              ],
+            );
+          });
+          if (!proceed) {
+            setSaving(false);
+            return;
+          }
         }
       }
 
@@ -582,36 +585,6 @@ export function ProductsScreen() {
       setFormMessage(err instanceof Error ? err.message : 'No se pudo guardar el producto');
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleDeleteProduct(product: Product) {
-    if (!canMutate) {
-      setError('Sin conexión con API. Revalida la conexión para continuar.');
-      return;
-    }
-    const confirmed = await new Promise<boolean>((resolve) => {
-      Alert.alert(
-        'Eliminar producto',
-        `¿Eliminar "${product.name}"? Esta acción no se puede deshacer.`,
-        [
-          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Eliminar', style: 'destructive', onPress: () => resolve(true) },
-        ],
-      );
-    });
-    if (!confirmed) return;
-
-    setDeleting(true);
-    try {
-      await deleteProduct(apiClient, product.id);
-      setProducts((prev) => prev.filter((item) => item.id !== product.id));
-      setSelectedProduct(null);
-      setShowDetailModal(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo eliminar el producto');
-    } finally {
-      setDeleting(false);
     }
   }
 
@@ -734,7 +707,7 @@ export function ProductsScreen() {
   }, [activeFilter, brandFilter, filteredProducts.length, groupFilter, query, sortBy, supplierFilter, viewMode]);
 
   useEffect(() => {
-    if (!showFormModal) return undefined;
+    if (!showFormModal || formMode !== 'create') return undefined;
 
     const name = form.name.trim();
     if (name.length < 2) {
@@ -751,6 +724,7 @@ export function ProductsScreen() {
   }, [
     checkDuplicates,
     form,
+    formMode,
     showFormModal,
   ]);
 
@@ -798,9 +772,9 @@ export function ProductsScreen() {
         ) : null}
 
         <View style={styles.filtersCard}>
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
             style={styles.searchInput}
             placeholder="Buscar por nombre, SKU, barra..."
             placeholderTextColor="#64748B"
@@ -910,50 +884,49 @@ export function ProductsScreen() {
                   ))}
                 </View>
               </View>
-
             </View>
           ) : null}
-          </View>
+        </View>
 
-          <View style={styles.paginationBar}>
-            <Text style={styles.paginationText}>
-              Página {currentPage} de {totalPages} · {pageStartLabel}-{pageEndLabel} de {filteredProducts.length}
-            </Text>
-            <View style={styles.paginationButtons}>
-              <Pressable
-                style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
-                onPress={() => setCurrentPage(1)}
-                disabled={currentPage === 1}
-              >
-                <Text style={styles.paginationButtonText}>Primera</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
-                onPress={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                disabled={currentPage === 1}
-              >
-                <Text style={styles.paginationButtonText}>Anterior</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
-                onPress={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                disabled={currentPage === totalPages}
-              >
-                <Text style={styles.paginationButtonText}>Siguiente</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
-                onPress={() => setCurrentPage(totalPages)}
-                disabled={currentPage === totalPages}
-              >
-                <Text style={styles.paginationButtonText}>Última</Text>
-              </Pressable>
-            </View>
+        <View style={styles.paginationBar}>
+          <Text style={styles.paginationText}>
+            Página {currentPage} de {totalPages} · {pageStartLabel}-{pageEndLabel} de {filteredProducts.length}
+          </Text>
+          <View style={styles.paginationButtons}>
+            <Pressable
+              style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+              onPress={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+            >
+              <Text style={styles.paginationButtonText}>Primera</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+              onPress={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+            >
+              <Text style={styles.paginationButtonText}>Anterior</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+              onPress={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+            >
+              <Text style={styles.paginationButtonText}>Siguiente</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+              onPress={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+            >
+              <Text style={styles.paginationButtonText}>Última</Text>
+            </Pressable>
           </View>
+        </View>
 
         {isTableMode ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled>
-            <View style={styles.tableShell}>
+            <View style={[styles.tableShell, styles.tableViewport, { height: tableViewportHeight }]}>
               <View style={styles.tableHeader}>
                 <Text style={[styles.tableHeaderCell, styles.tableSkuCell]}>SKU</Text>
                 <Text style={[styles.tableHeaderCell, styles.tableNameCell]}>Nombre</Text>
@@ -964,22 +937,29 @@ export function ProductsScreen() {
                 <Text style={[styles.tableHeaderCell, styles.tableBarcodeCell]}>Barras</Text>
                 <Text style={[styles.tableHeaderCell, styles.tableStatusCell]}>Estado</Text>
               </View>
-              {paginatedProducts.length > 0 ? (
-                <View style={styles.tableBody}>
-                  {paginatedProducts.map((item) => (
-                    <View key={item.id}>{renderTableProduct({ item })}</View>
-                  ))}
-                </View>
-              ) : loading ? (
-                <View style={styles.emptyState}>
-                  <ActivityIndicator color="#0A8F5A" />
-                  <Text style={styles.emptyText}>Cargando productos...</Text>
-                </View>
-              ) : (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyText}>No hay productos con esos filtros.</Text>
-                </View>
-              )}
+
+              <FlatList
+                data={paginatedProducts}
+                keyExtractor={(item) => String(item.id)}
+                renderItem={renderTableProduct}
+                style={styles.tableList}
+                contentContainerStyle={styles.tableListContent}
+                keyboardShouldPersistTaps="handled"
+                nestedScrollEnabled
+                showsVerticalScrollIndicator
+                ListEmptyComponent={
+                  loading ? (
+                    <View style={styles.emptyState}>
+                      <ActivityIndicator color="#0A8F5A" />
+                      <Text style={styles.emptyText}>Cargando productos...</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.emptyState}>
+                      <Text style={styles.emptyText}>No hay productos con esos filtros.</Text>
+                    </View>
+                  )
+                }
+              />
             </View>
           </ScrollView>
         ) : paginatedProducts.length > 0 ? (
@@ -1142,21 +1122,6 @@ export function ProductsScreen() {
                 >
                   <Text style={styles.secondaryButtonText}>Editar</Text>
                 </Pressable>
-                <Pressable
-                  style={[styles.dangerButton, deleting ? styles.buttonDisabled : null]}
-                  onPress={() => {
-                    if (selectedProduct) {
-                      handleDeleteProduct(selectedProduct).catch(() => undefined);
-                    }
-                  }}
-                  disabled={deleting}
-                >
-                  {deleting ? (
-                    <ActivityIndicator color="#FFFFFF" size="small" />
-                  ) : (
-                    <Text style={styles.dangerButtonText}>Eliminar</Text>
-                  )}
-                </Pressable>
               </View>
             </ScrollView>
           </View>
@@ -1234,17 +1199,19 @@ export function ProductsScreen() {
                 </View>
 
                 <View style={styles.actionRow}>
-                  <Pressable
-                    style={[styles.secondaryButton, styles.flexButton]}
-                    onPress={() => checkDuplicates(form).catch(() => undefined)}
-                    disabled={duplicateChecking}
-                  >
-                    {duplicateChecking ? (
-                      <ActivityIndicator size="small" color="#0A8F5A" />
-                    ) : (
-                      <Text style={styles.secondaryButtonText}>Buscar duplicados</Text>
-                    )}
-                  </Pressable>
+                  {formMode === 'create' ? (
+                    <Pressable
+                      style={[styles.secondaryButton, styles.flexButton]}
+                      onPress={() => checkDuplicates(form).catch(() => undefined)}
+                      disabled={duplicateChecking}
+                    >
+                      {duplicateChecking ? (
+                        <ActivityIndicator size="small" color="#0A8F5A" />
+                      ) : (
+                        <Text style={styles.secondaryButtonText}>Buscar duplicados</Text>
+                      )}
+                    </Pressable>
+                  ) : null}
                   <Pressable
                     style={[styles.secondaryButton, styles.flexButton]}
                     onPress={() => suggestCost(form).catch(() => undefined)}
@@ -1258,7 +1225,7 @@ export function ProductsScreen() {
                   </Pressable>
                 </View>
 
-                {duplicateCandidates.length > 0 ? (
+                {formMode === 'create' && duplicateCandidates.length > 0 ? (
                   <View style={styles.alertCard}>
                     <Text style={styles.alertTitle}>
                       {hasHighDuplicateRisk ? 'Posible duplicado de riesgo alto' : 'Posibles duplicados'}
@@ -1541,18 +1508,6 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '800',
   },
-  dangerButton: {
-    backgroundColor: '#DC2626',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dangerButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
   buttonDisabled: {
     opacity: 0.7,
   },
@@ -1618,12 +1573,12 @@ const styles = StyleSheet.create({
   tableListContent: {
     paddingBottom: 8,
   },
-  tableBody: {
-    gap: 0,
-  },
   tableShell: {
     width: 1320,
     alignSelf: 'flex-start',
+  },
+  tableViewport: {
+    overflow: 'hidden',
   },
   tableHeader: {
     flexDirection: 'row',
@@ -1657,6 +1612,9 @@ const styles = StyleSheet.create({
     color: '#1E293B',
     fontSize: 13,
     fontWeight: '700',
+  },
+  tableList: {
+    flex: 1,
   },
   tableSkuCell: {
     width: 86,
