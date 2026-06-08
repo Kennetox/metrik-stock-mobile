@@ -11,9 +11,10 @@ import { LabelsScreen } from './LabelsScreen';
 import { LotDetailScreen } from './LotDetailScreen';
 import { LotsScreen } from './LotsScreen';
 import { ProductsScreen } from './ProductsScreen';
+import { StockLevelsScreen } from './StockLevelsScreen';
 import { RecountsScreen } from './RecountsScreen';
 
-type TabKey = 'lots' | 'recounts' | 'labels' | 'products' | 'history' | 'profile';
+type TabKey = 'lots' | 'recounts' | 'labels' | 'products' | 'stockLevels' | 'history' | 'profile';
 
 const COLORS = {
   pageBg: '#E9EDF3',
@@ -59,6 +60,7 @@ export function HomeScreen() {
     recounts: false,
     labels: false,
     products: false,
+    stockLevels: false,
     history: false,
     profile: false,
   });
@@ -70,6 +72,7 @@ export function HomeScreen() {
   const inLotWorkspace = selectedLotId !== null;
   const inRecountWorkspace = tab === 'recounts' && recountWorkspaceOpen;
   const isProductsTab = tab === 'products';
+  const isStockLevelsTab = tab === 'stockLevels';
   const hideBottomNav = inLotWorkspace || inRecountWorkspace;
   const showTopBackButton = inLotWorkspace || inRecountWorkspace;
   const bottomInset = Math.max(insets.bottom, 10);
@@ -77,7 +80,7 @@ export function HomeScreen() {
   const navReservedSpace = 84 + bottomInset;
   const contentBottomPadding = hideBottomNav
     ? 12 + bottomInset
-    : isProductsTab
+    : isProductsTab || isStockLevelsTab
       ? 24 + bottomInset
       : navReservedSpace;
 
@@ -170,6 +173,12 @@ export function HomeScreen() {
           </View>
         ) : null}
 
+        {visitedTabs.stockLevels ? (
+          <View style={[styles.tabScene, tab === 'stockLevels' ? null : styles.tabSceneHidden]}>
+            <StockLevelsScreen />
+          </View>
+        ) : null}
+
         {visitedTabs.recounts ? (
           <View style={[styles.tabScene, tab === 'recounts' ? null : styles.tabSceneHidden]}>
             <RecountsScreen
@@ -215,6 +224,11 @@ export function HomeScreen() {
             <BottomTabButton icon="count" active={tab === 'recounts'} onPress={() => handleSelectTab('recounts')} />
             <BottomTabButton icon="tag" active={tab === 'labels'} onPress={() => handleSelectTab('labels')} />
             <BottomTabButton icon="box" active={tab === 'products'} onPress={() => handleSelectTab('products')} />
+            <BottomTabButton
+              icon="levels"
+              active={tab === 'stockLevels'}
+              onPress={() => handleSelectTab('stockLevels')}
+            />
             <BottomTabButton icon="report" active={tab === 'history'} onPress={() => handleSelectTab('history')} />
             <BottomTabButton icon="profile" active={tab === 'profile'} onPress={() => handleSelectTab('profile')} />
           </View>
@@ -325,7 +339,7 @@ function BottomTabButton({
   active,
   onPress,
 }: {
-  icon: 'home' | 'count' | 'tag' | 'box' | 'report' | 'profile';
+  icon: 'home' | 'count' | 'tag' | 'box' | 'levels' | 'report' | 'profile';
   active: boolean;
   onPress: () => void;
 }) {
@@ -340,7 +354,13 @@ function BottomTabButton({
   );
 }
 
-function NavIcon({ name, color }: { name: 'home' | 'count' | 'tag' | 'box' | 'report' | 'profile'; color: string }) {
+function NavIcon({
+  name,
+  color,
+}: {
+  name: 'home' | 'count' | 'tag' | 'box' | 'levels' | 'report' | 'profile';
+  color: string;
+}) {
   const strokeWidth = 1.9;
 
   if (name === 'home') {
@@ -422,6 +442,19 @@ function NavIcon({ name, color }: { name: 'home' | 'count' | 'tag' | 'box' | 're
           strokeWidth={1.6}
           strokeLinecap="round"
         />
+      </Svg>
+    );
+  }
+
+  if (name === 'levels') {
+    return (
+      <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+        <Path d="M5 7H19" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+        <Path d="M5 12H15.5" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+        <Path d="M5 17H12" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+        <Circle cx={19} cy={7} r={1.35} fill={color} />
+        <Circle cx={15.5} cy={12} r={1.35} fill={color} />
+        <Circle cx={12} cy={17} r={1.35} fill={color} />
       </Svg>
     );
   }

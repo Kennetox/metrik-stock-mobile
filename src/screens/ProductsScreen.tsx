@@ -38,8 +38,6 @@ type ViewMode = 'table' | 'cards';
 type PickerKind = 'group' | 'brand' | 'supplier';
 type PickerContext = 'filter' | 'form';
 
-const PAGE_SIZE = 12;
-
 const PAGE_LIMIT = 5000;
 
 const DEFAULT_FORM: ProductFormState = {
@@ -199,7 +197,7 @@ function buildPayload(form: ProductFormState, options?: { autoGenerateCodes?: bo
 }
 
 export function ProductsScreen() {
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   const { apiClient, syncStatus } = useAppSession();
   const [products, setProducts] = useState<Product[]>([]);
   const [groups, setGroups] = useState<ProductGroup[]>([]);
@@ -239,9 +237,7 @@ export function ProductsScreen() {
   const isTableMode = viewMode === 'table';
   const isCompactHeader = width < 420;
   const isCompactLayout = width < 520;
-  const tableViewportHeight = isCompactLayout
-    ? Math.max(260, Math.min(380, Math.round(height * 0.34)))
-    : Math.max(300, Math.min(520, Math.round(height * 0.42)));
+  const pageSize = isCompactLayout ? 18 : 24;
   const hasAdvancedFilters =
     activeFilter !== 'all' ||
     Boolean(groupFilter.trim()) ||
@@ -353,11 +349,11 @@ export function ProductsScreen() {
     return sorted;
   }, [activeFilter, brandFilter, groupFilter, products, query, sortBy, supplierFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
-  const pageStart = (currentPage - 1) * PAGE_SIZE;
-  const paginatedProducts = filteredProducts.slice(pageStart, pageStart + PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
+  const pageStart = (currentPage - 1) * pageSize;
+  const paginatedProducts = filteredProducts.slice(pageStart, pageStart + pageSize);
   const pageStartLabel = filteredProducts.length === 0 ? 0 : pageStart + 1;
-  const pageEndLabel = Math.min(pageStart + PAGE_SIZE, filteredProducts.length);
+  const pageEndLabel = Math.min(pageStart + pageSize, filteredProducts.length);
 
   const groupSelectOptions = useMemo(() => {
     return [...groups]
@@ -782,43 +778,81 @@ export function ProductsScreen() {
             autoCorrect={false}
           />
 
-          <View style={styles.actionRow}>
-            <View style={styles.modeRow}>
-              <Pressable
-                style={[styles.modeChip, isTableMode ? styles.modeChipActive : null]}
-                onPress={() => setViewMode('table')}
-              >
-                <Text style={[styles.modeChipText, isTableMode ? styles.modeChipTextActive : null]}>Tabla</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modeChip, !isTableMode ? styles.modeChipActive : null]}
-                onPress={() => setViewMode('cards')}
-              >
-                <Text style={[styles.modeChipText, !isTableMode ? styles.modeChipTextActive : null]}>Tarjetas</Text>
-              </Pressable>
-            </View>
-            <Pressable
-              style={[styles.advancedToggleButton, showAdvancedFilters ? styles.advancedToggleButtonActive : null]}
-              onPress={() => setShowAdvancedFilters((prev) => !prev)}
-            >
-              <Text style={[styles.advancedToggleText, showAdvancedFilters ? styles.advancedToggleTextActive : null]}>
-                {showAdvancedFilters ? 'Ocultar filtros avanzados' : 'Mostrar filtros avanzados'}
+          <View style={styles.controlsBar}>
+            <View style={styles.paginationCompact}>
+              <Text style={styles.paginationText}>
+                Página {currentPage} de {totalPages} · {pageStartLabel}-{pageEndLabel} de {filteredProducts.length}
               </Text>
-            </Pressable>
-            {hasAdvancedFilters ? (
+              <View style={styles.paginationButtons}>
+                <Pressable
+                  style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+                  onPress={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                >
+                  <Text style={styles.paginationButtonText}>Primera</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+                  onPress={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                >
+                  <Text style={styles.paginationButtonText}>Anterior</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+                  onPress={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                >
+                  <Text style={styles.paginationButtonText}>Siguiente</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+                  onPress={() => setCurrentPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                >
+                  <Text style={styles.paginationButtonText}>Última</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.controlsRight}>
+              <View style={styles.modeRow}>
+                <Pressable
+                  style={[styles.modeChip, isTableMode ? styles.modeChipActive : null]}
+                  onPress={() => setViewMode('table')}
+                >
+                  <Text style={[styles.modeChipText, isTableMode ? styles.modeChipTextActive : null]}>Tabla</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.modeChip, !isTableMode ? styles.modeChipActive : null]}
+                  onPress={() => setViewMode('cards')}
+                >
+                  <Text style={[styles.modeChipText, !isTableMode ? styles.modeChipTextActive : null]}>Tarjetas</Text>
+                </Pressable>
+              </View>
               <Pressable
-                style={styles.advancedClearButton}
-                onPress={() => {
-                  setActiveFilter('all');
-                  setGroupFilter('');
-                  setBrandFilter('');
-                  setSupplierFilter('');
-                  setSortBy('recent');
-                }}
+                style={[styles.advancedToggleButton, showAdvancedFilters ? styles.advancedToggleButtonActive : null]}
+                onPress={() => setShowAdvancedFilters((prev) => !prev)}
               >
-                <Text style={styles.advancedClearText}>Limpiar</Text>
+                <Text style={[styles.advancedToggleText, showAdvancedFilters ? styles.advancedToggleTextActive : null]}>
+                  {showAdvancedFilters ? 'Ocultar filtros avanzados' : 'Mostrar filtros avanzados'}
+                </Text>
               </Pressable>
-            ) : null}
+              {hasAdvancedFilters ? (
+                <Pressable
+                  style={styles.advancedClearButton}
+                  onPress={() => {
+                    setActiveFilter('all');
+                    setGroupFilter('');
+                    setBrandFilter('');
+                    setSupplierFilter('');
+                    setSortBy('recent');
+                  }}
+                >
+                  <Text style={styles.advancedClearText}>Limpiar</Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
 
           {showAdvancedFilters ? (
@@ -888,80 +922,53 @@ export function ProductsScreen() {
           ) : null}
         </View>
 
-        <View style={styles.paginationBar}>
-          <Text style={styles.paginationText}>
-            Página {currentPage} de {totalPages} · {pageStartLabel}-{pageEndLabel} de {filteredProducts.length}
-          </Text>
-          <View style={styles.paginationButtons}>
-            <Pressable
-              style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
-              onPress={() => setCurrentPage(1)}
-              disabled={currentPage === 1}
-            >
-              <Text style={styles.paginationButtonText}>Primera</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
-              onPress={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-            >
-              <Text style={styles.paginationButtonText}>Anterior</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
-              onPress={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
-            >
-              <Text style={styles.paginationButtonText}>Siguiente</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
-              onPress={() => setCurrentPage(totalPages)}
-              disabled={currentPage === totalPages}
-            >
-              <Text style={styles.paginationButtonText}>Última</Text>
-            </Pressable>
-          </View>
-        </View>
-
         {isTableMode ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled>
-            <View style={[styles.tableShell, styles.tableViewport, { height: tableViewportHeight }]}>
-              <View style={styles.tableHeader}>
-                <Text style={[styles.tableHeaderCell, styles.tableSkuCell]}>SKU</Text>
-                <Text style={[styles.tableHeaderCell, styles.tableNameCell]}>Nombre</Text>
-                <Text style={[styles.tableHeaderCell, styles.tableGroupCell]}>Grupo</Text>
-                <Text style={[styles.tableHeaderCell, styles.tableBrandCell]}>Marca</Text>
-                <Text style={[styles.tableHeaderCell, styles.tablePriceCell]}>Precio</Text>
-                <Text style={[styles.tableHeaderCell, styles.tablePriceCell]}>Costo</Text>
-                <Text style={[styles.tableHeaderCell, styles.tableBarcodeCell]}>Barras</Text>
-                <Text style={[styles.tableHeaderCell, styles.tableStatusCell]}>Estado</Text>
-              </View>
+          <View style={styles.tablePanel}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              nestedScrollEnabled
+              contentContainerStyle={styles.tableScrollContent}
+            >
+              <View style={styles.tableShell}>
+                <View style={styles.tableViewport}>
+                  <View style={styles.tableHeader}>
+                    <Text style={[styles.tableHeaderCell, styles.tableSkuCell]}>SKU</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tableNameCell]}>Nombre</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tableGroupCell]}>Grupo</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tableBrandCell]}>Marca</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tablePriceCell]}>Precio</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tablePriceCell]}>Costo</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tableBarcodeCell]}>Barras</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tableStatusCell]}>Estado</Text>
+                  </View>
 
-              <FlatList
-                data={paginatedProducts}
-                keyExtractor={(item) => String(item.id)}
-                renderItem={renderTableProduct}
-                style={styles.tableList}
-                contentContainerStyle={styles.tableListContent}
-                keyboardShouldPersistTaps="handled"
-                nestedScrollEnabled
-                showsVerticalScrollIndicator
-                ListEmptyComponent={
-                  loading ? (
-                    <View style={styles.emptyState}>
-                      <ActivityIndicator color="#0A8F5A" />
-                      <Text style={styles.emptyText}>Cargando productos...</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.emptyState}>
-                      <Text style={styles.emptyText}>No hay productos con esos filtros.</Text>
-                    </View>
-                  )
-                }
-              />
-            </View>
-          </ScrollView>
+                  <FlatList
+                    data={paginatedProducts}
+                    keyExtractor={(item) => String(item.id)}
+                    renderItem={renderTableProduct}
+                    style={styles.tableList}
+                    contentContainerStyle={styles.tableListContent}
+                    keyboardShouldPersistTaps="handled"
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator
+                    ListEmptyComponent={
+                      loading ? (
+                        <View style={styles.emptyState}>
+                          <ActivityIndicator color="#0A8F5A" />
+                          <Text style={styles.emptyText}>Cargando productos...</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.emptyState}>
+                          <Text style={styles.emptyText}>No hay productos con esos filtros.</Text>
+                        </View>
+                      )
+                    }
+                  />
+                </View>
+              </View>
+            </ScrollView>
+          </View>
         ) : paginatedProducts.length > 0 ? (
           <View style={styles.cardsBody}>
             {paginatedProducts.map((item) => (
@@ -1088,7 +1095,11 @@ export function ProductsScreen() {
       <Modal visible={showDetailModal} transparent animationType="fade" onRequestClose={() => setShowDetailModal(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.detailModalCard}>
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.detailModalScroll}
+              contentContainerStyle={styles.detailModalScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
               <Text style={styles.modalTitle}>{selectedProduct?.name || 'Producto'}</Text>
               <Text style={styles.modalSubtitle}>{selectedProduct?.sku || 'Sin SKU'}</Text>
 
@@ -1110,20 +1121,21 @@ export function ProductsScreen() {
                 </View>
               ) : null}
 
-              <View style={styles.modalActionsRow}>
-                <Pressable style={styles.secondaryButton} onPress={() => setShowDetailModal(false)}>
-                  <Text style={styles.secondaryButtonText}>Cerrar</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.secondaryButton}
-                  onPress={() => {
-                    if (selectedProduct) openEditModal(selectedProduct);
-                  }}
-                >
-                  <Text style={styles.secondaryButtonText}>Editar</Text>
-                </Pressable>
-              </View>
             </ScrollView>
+
+            <View style={styles.detailActionsBar}>
+              <Pressable style={styles.secondaryButton} onPress={() => setShowDetailModal(false)}>
+                <Text style={styles.secondaryButtonText}>Cerrar</Text>
+              </Pressable>
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => {
+                  if (selectedProduct) openEditModal(selectedProduct);
+                }}
+              >
+                <Text style={styles.secondaryButtonText}>Editar</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1535,24 +1547,52 @@ const styles = StyleSheet.create({
   cardsBody: {
     gap: 10,
   },
-  paginationBar: {
+  tablePanel: {
+    flex: 1,
+    minHeight: 0,
+  },
+  tableScrollContent: {
+    flexGrow: 1,
+  },
+  controlsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#B7C4D5',
     backgroundColor: '#DCE4EE',
     paddingHorizontal: 9,
     paddingVertical: 7,
-    gap: 6,
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  paginationCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+    flexWrap: 'wrap',
   },
   paginationText: {
     color: '#334155',
     fontSize: 12,
     fontWeight: '700',
+    flexShrink: 1,
   },
   paginationButtons: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
+    justifyContent: 'flex-end',
+  },
+  controlsRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
   },
   paginationButton: {
     borderRadius: 999,
@@ -1576,8 +1616,11 @@ const styles = StyleSheet.create({
   tableShell: {
     width: 1320,
     alignSelf: 'flex-start',
+    flex: 1,
+    minHeight: 0,
   },
   tableViewport: {
+    flex: 1,
     overflow: 'hidden',
   },
   tableHeader: {
@@ -2004,12 +2047,24 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
   },
   detailModalCard: {
+    height: '84%',
+    width: '100%',
+    maxWidth: 760,
     maxHeight: '84%',
     backgroundColor: '#F8FAFC',
     borderRadius: 18,
     borderWidth: 1,
     borderColor: '#CBD5E1',
     padding: 14,
+    overflow: 'hidden',
+    flexDirection: 'column',
+  },
+  detailModalScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  detailModalScrollContent: {
+    paddingBottom: 14,
   },
   formModalCard: {
     height: '90%',
@@ -2080,6 +2135,16 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     justifyContent: 'flex-end',
+    marginTop: 12,
+  },
+  detailActionsBar: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'flex-end',
+    borderTopWidth: 1,
+    borderTopColor: '#D8DFEA',
+    backgroundColor: '#F8FAFC',
+    paddingTop: 12,
     marginTop: 12,
   },
   formActionsBar: {

@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Keyboard,
   Modal,
   Pressable,
@@ -9,6 +10,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  Platform,
   View,
 } from 'react-native';
 
@@ -291,6 +293,7 @@ export function LotDetailScreen({
   const [selectedGroupLabel, setSelectedGroupLabel] = useState('');
   const [createProductError, setCreateProductError] = useState<string | null>(null);
   const [duplicateCandidates, setDuplicateCandidates] = useState<ProductDuplicateCandidate[]>([]);
+  const [selectedDuplicateCandidate, setSelectedDuplicateCandidate] = useState<ProductDuplicateCandidate | null>(null);
   const [duplicateChecking, setDuplicateChecking] = useState(false);
   const [hasHighDuplicateRisk, setHasHighDuplicateRisk] = useState(false);
   const [costSuggestion, setCostSuggestion] = useState<ProductCostSuggestionResponse | null>(null);
@@ -298,6 +301,8 @@ export function LotDetailScreen({
   const [costMode] = useState<'balanced' | 'conservative' | 'aggressive'>('balanced');
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const canMutate = syncStatus === 'online' || syncStatus === 'degraded';
+  const createProductScrollRef = useRef<ScrollView | null>(null);
+  const duplicateCheckRequestRef = useRef(0);
 
   function ensureCanMutate(): boolean {
     if (canMutate) return true;
@@ -338,6 +343,13 @@ export function LotDetailScreen({
       hideSub.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!showCreateProductModal) return;
+    requestAnimationFrame(() => {
+      createProductScrollRef.current?.scrollTo({ y: 0, animated: false });
+    });
+  }, [showCreateProductModal]);
 
   const totalUnits = useMemo(() => {
     if (!detail) return 0;
@@ -406,30 +418,73 @@ export function LotDetailScreen({
 
   const checkDuplicates = useCallback(async (): Promise<ProductDuplicateCandidatesResponse> => {
     const name = newProductName.trim();
-    if (!name) {
+    const group = selectedGroupPath.trim();
+    if (!name || name.length < 2) {
       setDuplicateCandidates([]);
       setHasHighDuplicateRisk(false);
+      setDuplicateChecking(false);
       return { candidates: [], has_high_risk: false };
     }
+    const requestId = ++duplicateCheckRequestRef.current;
     setDuplicateChecking(true);
     try {
       const response = await getProductDuplicateCandidates(apiClient, {
         name,
         sku: previewSku.trim() || null,
         barcode: previewBarcode.trim() || null,
-        group_name: selectedGroupPath.trim() || null,
+        group_name: group || null,
         limit: 6,
       });
-      setDuplicateCandidates(response.candidates);
-      setHasHighDuplicateRisk(response.has_high_risk && response.candidates.length > 0);
+      if (requestId === duplicateCheckRequestRef.current) {
+        setDuplicateCandidates(response.candidates);
+        setHasHighDuplicateRisk(response.has_high_risk && response.candidates.length > 0);
+        if (
+          selectedDuplicateCandidate &&
+          !response.candidates.some((candidate) => candidate.product_id === selectedDuplicateCandidate.product_id)
+        ) {
+          setSelectedDuplicateCandidate(null);
+        }
+      }
       return response;
     } catch (err) {
-      setCreateProductError(err instanceof Error ? err.message : 'No se pudieron revisar duplicados');
+      if (requestId === duplicateCheckRequestRef.current) {
+        setCreateProductError(err instanceof Error ? err.message : 'No se pudieron revisar duplicados');
+      }
       return { candidates: [], has_high_risk: false };
     } finally {
-      setDuplicateChecking(false);
+      if (requestId === duplicateCheckRequestRef.current) {
+        setDuplicateChecking(false);
+      }
     }
-  }, [apiClient, newProductName, previewBarcode, previewSku, selectedGroupPath]);
+  }, [apiClient, newProductName, previewBarcode, previewSku, selectedDuplicateCandidate, selectedGroupPath]);
+
+  useEffect(() => {
+    if (!showCreateProductModal) return;
+
+    const name = newProductName.trim();
+
+    if (loadingProductCodes || loadingProductGroups) return;
+    if (name.length < 2) {
+      duplicateCheckRequestRef.current += 1;
+      setDuplicateCandidates([]);
+      setHasHighDuplicateRisk(false);
+      setDuplicateChecking(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      checkDuplicates().catch(() => undefined);
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [
+    checkDuplicates,
+    loadingProductCodes,
+    loadingProductGroups,
+    newProductName,
+    selectedGroupPath,
+    showCreateProductModal,
+  ]);
 
   async function suggestCost() {
     const price = parseMoneyInput(newProductPrice);
@@ -597,6 +652,7 @@ export function LotDetailScreen({
     setError(null);
     setCreateProductError(null);
     setDuplicateCandidates([]);
+    setSelectedDuplicateCandidate(null);
     setHasHighDuplicateRisk(false);
     setCostSuggestion(null);
     setNewProductName(productQuery.trim());
@@ -642,6 +698,7 @@ export function LotDetailScreen({
     setShowLabelFormatPicker(false);
     setCreateProductError(null);
     setDuplicateCandidates([]);
+    setSelectedDuplicateCandidate(null);
     setHasHighDuplicateRisk(false);
     setCostSuggestion(null);
     setDuplicateChecking(false);
@@ -689,12 +746,37 @@ export function LotDetailScreen({
 
   async function handleCreateAndAddProduct() {
     if (!ensureCanMutate()) return;
+    const qty = Number(newProductQty);
+    setCreateProductError(null);
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setCreateProductError('La cantidad debe ser mayor a 0.');
+      return;
+    }
+
+    if (selectedDuplicateCandidate) {
+      setCreatingProduct(true);
+      try {
+        await addReceivingLotItem(apiClient, lotId, {
+          product_id: selectedDuplicateCandidate.product_id,
+          qty_received: qty,
+        });
+        await loadDetail();
+        setError(null);
+        closeCreateProductModal();
+        closeAddMode();
+      } catch (err) {
+        setCreateProductError(err instanceof Error ? err.message : 'No se pudo agregar el producto existente al lote');
+      } finally {
+        setCreatingProduct(false);
+      }
+      return;
+    }
+
     const name = newProductName.trim();
     const price = parseMoneyInput(newProductPrice);
     const hasCostInput = newProductCost.trim().length > 0;
     const cost = hasCostInput ? parseMoneyInput(newProductCost) : 0;
-    const qty = Number(newProductQty);
-    setCreateProductError(null);
 
     if (!name) {
       setCreateProductError('El nombre del producto es obligatorio.');
@@ -710,10 +792,6 @@ export function LotDetailScreen({
     }
     if (cost > price) {
       setCreateProductError('El costo no puede ser mayor al precio de venta. Revisa los valores e intenta de nuevo.');
-      return;
-    }
-    if (!Number.isFinite(qty) || qty <= 0) {
-      setCreateProductError('La cantidad debe ser mayor a 0.');
       return;
     }
     if (!selectedGroupPath.trim()) {
@@ -1168,199 +1246,256 @@ export function LotDetailScreen({
         onRequestClose={closeCreateProductModal}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Crear producto nuevo</Text>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboardAvoiding}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <View style={[styles.modalCard, styles.modalCardScrollable]}>
+              <ScrollView
+                ref={createProductScrollRef}
+                style={styles.modalCardScroll}
+                contentContainerStyle={styles.modalCardScrollContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.modalTitle}>Crear producto nuevo</Text>
 
-            <Text style={styles.modalLabel}>Nombre *</Text>
-            <TextInput
-              value={newProductName}
-              onChangeText={setNewProductName}
-              style={styles.modalInput}
-              autoCapitalize="sentences"
-              autoCorrect={false}
-              placeholder="Ej: Cabina activa 12..."
-              placeholderTextColor="#64748b"
-            />
+                <Text style={styles.modalLabel}>Nombre *</Text>
+                <TextInput
+                  value={newProductName}
+                  onChangeText={setNewProductName}
+                  style={styles.modalInput}
+                  autoCapitalize="sentences"
+                  autoCorrect={false}
+                  placeholder="Ej: Cabina activa 12..."
+                  placeholderTextColor="#64748b"
+                />
 
               <Text style={styles.modalLabel}>Precio venta *</Text>
-            <TextInput
-              value={newProductPrice}
-              onChangeText={(value) => setNewProductPrice(formatMoneyInput(value))}
-              style={styles.modalInput}
-              keyboardType="numeric"
-              placeholder="Ej: 630.000"
-              placeholderTextColor="#64748b"
-            />
+                <TextInput
+                  value={newProductPrice}
+                  onChangeText={(value) => setNewProductPrice(formatMoneyInput(value))}
+                  style={styles.modalInput}
+                  keyboardType="numeric"
+                  placeholder="Ej: 630.000"
+                  placeholderTextColor="#64748b"
+                />
 
-            <Text style={styles.modalLabel}>Costo (opcional)</Text>
-            <TextInput
-              value={newProductCost}
-              onChangeText={(value) => setNewProductCost(formatMoneyInput(value))}
-              style={styles.modalInput}
-              keyboardType="numeric"
-              placeholder="Opcional"
-              placeholderTextColor="#64748b"
-            />
+                <Text style={styles.modalLabel}>Costo (opcional)</Text>
+                <TextInput
+                  value={newProductCost}
+                  onChangeText={(value) => setNewProductCost(formatMoneyInput(value))}
+                  style={styles.modalInput}
+                  keyboardType="numeric"
+                  placeholder="Opcional"
+                  placeholderTextColor="#64748b"
+                />
 
-            <View style={styles.createHelpersRow}>
-              <Pressable
-                style={[styles.createHelperButton, duplicateChecking ? styles.actionDisabled : null]}
-                onPress={() => {
-                  checkDuplicates().catch(() => undefined);
-                }}
-                disabled={duplicateChecking}
-              >
-                {duplicateChecking ? (
-                  <ActivityIndicator size="small" color="#0A8F5A" />
-                ) : (
-                  <Text style={styles.createHelperButtonText}>Buscar duplicados</Text>
-                )}
-              </Pressable>
-              <Pressable
-                style={[styles.createHelperButton, costChecking ? styles.actionDisabled : null]}
-                onPress={() => {
-                  suggestCost().catch(() => undefined);
-                }}
-                disabled={costChecking}
-              >
-                {costChecking ? (
-                  <ActivityIndicator size="small" color="#0A8F5A" />
-                ) : (
-                  <Text style={styles.createHelperButtonText}>Sugerir costo</Text>
-                )}
-              </Pressable>
-            </View>
+                <View style={styles.createHelpersRow}>
+                  <Pressable
+                    style={[styles.createHelperButton, duplicateChecking ? styles.actionDisabled : null]}
+                    onPress={() => {
+                      checkDuplicates().catch(() => undefined);
+                    }}
+                    disabled={duplicateChecking}
+                  >
+                    {duplicateChecking ? (
+                      <ActivityIndicator size="small" color="#0A8F5A" />
+                    ) : (
+                      <Text style={styles.createHelperButtonText}>Buscar duplicados</Text>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    style={[styles.createHelperButton, costChecking ? styles.actionDisabled : null]}
+                    onPress={() => {
+                      suggestCost().catch(() => undefined);
+                    }}
+                    disabled={costChecking}
+                  >
+                    {costChecking ? (
+                      <ActivityIndicator size="small" color="#0A8F5A" />
+                    ) : (
+                      <Text style={styles.createHelperButtonText}>Sugerir costo</Text>
+                    )}
+                  </Pressable>
+                </View>
 
-            {duplicateCandidates.length > 0 ? (
-              <View style={styles.duplicateCard}>
-                <Text style={styles.alertTitle}>
-                  {hasHighDuplicateRisk ? 'Posible duplicado de riesgo alto' : 'Posibles duplicados'}
-                </Text>
-                {duplicateCandidates.slice(0, 3).map((candidate) => (
-                  <View key={candidate.product_id} style={styles.duplicateRow}>
-                    <Text style={styles.duplicateName}>{candidate.name}</Text>
-                    <Text style={styles.duplicateMeta}>
-                      {candidate.sku ? `SKU ${candidate.sku}` : 'Sin SKU'} · {Math.round(candidate.similarity_score * 100)}%
+                {duplicateCandidates.length > 0 ? (
+                  <View style={styles.duplicateCard}>
+                    <Text style={styles.alertTitle}>
+                      {hasHighDuplicateRisk ? 'Posible duplicado de riesgo alto' : 'Posibles duplicados'}
                     </Text>
-                    {candidate.match_reasons.length > 0 ? (
-                      <Text style={styles.duplicateReasons}>{candidate.match_reasons.slice(0, 2).join(' · ')}</Text>
-                    ) : null}
+                    {duplicateCandidates.slice(0, 3).map((candidate) => (
+                      <Pressable
+                        key={candidate.product_id}
+                        style={[
+                          styles.duplicateRow,
+                          selectedDuplicateCandidate?.product_id === candidate.product_id
+                            ? styles.duplicateRowSelected
+                            : null,
+                        ]}
+                        onPress={() => {
+                          setSelectedDuplicateCandidate(candidate);
+                          setCreateProductError(null);
+                        }}
+                      >
+                        <Text style={styles.duplicateName}>{candidate.name}</Text>
+                        <Text style={styles.duplicateMeta}>
+                          {candidate.sku ? `SKU ${candidate.sku}` : 'Sin SKU'} · {Math.round(candidate.similarity_score * 100)}%
+                        </Text>
+                        {candidate.match_reasons.length > 0 ? (
+                          <Text style={styles.duplicateReasons}>{candidate.match_reasons.slice(0, 2).join(' · ')}</Text>
+                        ) : null}
+                      </Pressable>
+                    ))}
                   </View>
-                ))}
+                ) : null}
+
+                {selectedDuplicateCandidate ? (
+                  <View style={styles.selectedProductCard}>
+                    <View style={styles.selectedProductHeader}>
+                      <View style={styles.selectedProductHeaderText}>
+                        <Text style={styles.alertTitle}>Producto existente seleccionado</Text>
+                        <Text style={styles.selectedProductName} numberOfLines={2}>
+                          {selectedDuplicateCandidate.name}
+                        </Text>
+                      </View>
+                      <Pressable
+                        style={styles.selectedProductClearButton}
+                        onPress={() => setSelectedDuplicateCandidate(null)}
+                      >
+                        <Text style={styles.selectedProductClearText}>Cambiar</Text>
+                      </Pressable>
+                    </View>
+                    <Text style={styles.selectedProductMeta}>
+                      {selectedDuplicateCandidate.sku ? `SKU ${selectedDuplicateCandidate.sku}` : 'Sin SKU'} ·{' '}
+                      {selectedDuplicateCandidate.barcode ? `Barras ${selectedDuplicateCandidate.barcode}` : 'Sin barras'}
+                    </Text>
+                    <Text style={styles.selectedProductMeta}>
+                      Precio {formatCurrency(selectedDuplicateCandidate.price)}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {costSuggestion ? (
+                  <View style={styles.costCard}>
+                    <Text style={styles.alertTitle}>Costo sugerido</Text>
+                    <Text style={styles.costValue}>{formatCurrency(costSuggestion.suggested_cost)}</Text>
+                    <Text style={styles.costMeta}>
+                      Confianza {costSuggestion.confidence_label} · {Math.round(costSuggestion.confidence_score * 100)}%
+                    </Text>
+                    <Text style={styles.costMeta}>
+                      Rango {formatCurrency(costSuggestion.range_min_cost)} - {formatCurrency(costSuggestion.range_max_cost)}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {selectedDuplicateCandidate ? null : (
+                  <>
+                    <Text style={styles.modalLabel}>SKU (autoasignado)</Text>
+                    <TextInput value={previewSku} style={styles.modalInput} editable={false} />
+
+                    <Text style={styles.modalLabel}>Código de barras (autoasignado)</Text>
+                    <TextInput value={previewBarcode} style={styles.modalInput} editable={false} />
+
+                    <Text style={styles.modalLabel}>Grupo *</Text>
+                    <Pressable
+                      style={[styles.groupSelectorButton, !canMutate ? styles.actionDisabled : null]}
+                      onPress={() => setShowGroupPicker(true)}
+                      disabled={!canMutate}
+                    >
+                      <Text style={styles.groupSelectorText}>
+                        {selectedGroupPath || selectedGroupLabel || 'Seleccionar grupo o subgrupo existente'}
+                      </Text>
+                    </Pressable>
+
+                    <Text style={styles.modalLabel}>Formato etiqueta</Text>
+                    <View style={styles.lockedFieldRow}>
+                      <Pressable
+                        style={[
+                          styles.groupSelectorButton,
+                          styles.lockedFieldInput,
+                          newProductLabelFormatLocked ? styles.inputReadonly : null,
+                        ]}
+                        onPress={() => {
+                          if (!newProductLabelFormatLocked) {
+                            setShowLabelFormatPicker(true);
+                          }
+                        }}
+                        disabled={newProductLabelFormatLocked}
+                      >
+                        <Text style={styles.groupSelectorText}>
+                          {normalizeLabelFormat(newProductLabelFormat, selectedGroupPath)}
+                        </Text>
+                      </Pressable>
+                      <Pressable style={styles.lockButton} onPress={toggleNewProductLabelFormatLock}>
+                        <Text style={styles.lockButtonText}>{newProductLabelFormatLocked ? '🔒' : '🔓'}</Text>
+                      </Pressable>
+                    </View>
+                    {createProductError ? <Text style={styles.modalError}>{createProductError}</Text> : null}
+                    {loadingProductGroups ? <ActivityIndicator color="#0A8F5A" /> : null}
+                  </>
+                )}
+
+              </ScrollView>
+
+            <View style={styles.createModalFooter}>
+              <View style={styles.qtyFooterBlock}>
+                <Text style={styles.modalLabel}>Cantidad para este lote</Text>
+                <View style={styles.qtyRow}>
+                  <Pressable
+                    style={styles.qtyStepBtn}
+                    onPress={() => {
+                      const current = Number(newProductQty) || 1;
+                      setNewProductQty(String(Math.max(1, current - 1)));
+                    }}
+                  >
+                    <Text style={styles.qtyStepText}>-</Text>
+                  </Pressable>
+                  <TextInput
+                    value={newProductQty}
+                    onChangeText={setNewProductQty}
+                    style={[styles.modalInput, styles.qtyInput]}
+                    keyboardType="numeric"
+                  />
+                  <Pressable
+                    style={styles.qtyStepBtn}
+                    onPress={() => {
+                      const current = Number(newProductQty) || 1;
+                      setNewProductQty(String(current + 1));
+                    }}
+                  >
+                    <Text style={styles.qtyStepText}>+</Text>
+                  </Pressable>
+                </View>
               </View>
-            ) : null}
 
-            {costSuggestion ? (
-              <View style={styles.costCard}>
-                <Text style={styles.alertTitle}>Costo sugerido</Text>
-                <Text style={styles.costValue}>{formatCurrency(costSuggestion.suggested_cost)}</Text>
-                <Text style={styles.costMeta}>
-                  Confianza {costSuggestion.confidence_label} · {Math.round(costSuggestion.confidence_score * 100)}%
-                </Text>
-                <Text style={styles.costMeta}>
-                  Rango {formatCurrency(costSuggestion.range_min_cost)} - {formatCurrency(costSuggestion.range_max_cost)}
-                </Text>
+              <View style={styles.modalActions}>
+                <Pressable style={styles.cancelButton} onPress={closeCreateProductModal} disabled={creatingProduct}>
+                  <Text style={styles.cancelButtonText}>Cancelar</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.saveButton}
+                  onPress={handleCreateAndAddProduct}
+                  disabled={creatingProduct || loadingProductCodes || loadingProductGroups || !canMutate}
+                >
+                  <Text style={styles.saveButtonText}>
+                    {loadingProductCodes || loadingProductGroups
+                      ? 'Validando conexión...'
+                      : creatingProduct
+                        ? selectedDuplicateCandidate
+                          ? 'Agregando...'
+                          : 'Creando...'
+                        : selectedDuplicateCandidate
+                          ? 'Agregar al lote'
+                          : 'Crear y agregar'}
+                  </Text>
+                </Pressable>
               </View>
-            ) : null}
-
-            <Text style={styles.modalLabel}>SKU (autoasignado)</Text>
-            <TextInput
-              value={previewSku}
-              style={styles.modalInput}
-              editable={false}
-            />
-
-            <Text style={styles.modalLabel}>Código de barras (autoasignado)</Text>
-            <TextInput
-              value={previewBarcode}
-              style={styles.modalInput}
-              editable={false}
-            />
-
-              <Text style={styles.modalLabel}>Grupo *</Text>
-            <Pressable
-              style={[styles.groupSelectorButton, !canMutate ? styles.actionDisabled : null]}
-              onPress={() => setShowGroupPicker(true)}
-              disabled={!canMutate}
-            >
-              <Text style={styles.groupSelectorText}>
-                {selectedGroupPath || selectedGroupLabel || 'Seleccionar grupo o subgrupo existente'}
-              </Text>
-            </Pressable>
-
-            <Text style={styles.modalLabel}>Formato etiqueta</Text>
-            <View style={styles.lockedFieldRow}>
-              <Pressable
-                style={[
-                  styles.groupSelectorButton,
-                  styles.lockedFieldInput,
-                  newProductLabelFormatLocked ? styles.inputReadonly : null,
-                ]}
-                onPress={() => {
-                  if (!newProductLabelFormatLocked) {
-                    setShowLabelFormatPicker(true);
-                  }
-                }}
-                disabled={newProductLabelFormatLocked}
-              >
-                <Text style={styles.groupSelectorText}>
-                  {normalizeLabelFormat(newProductLabelFormat, selectedGroupPath)}
-                </Text>
-              </Pressable>
-              <Pressable style={styles.lockButton} onPress={toggleNewProductLabelFormatLock}>
-                <Text style={styles.lockButtonText}>{newProductLabelFormatLocked ? '🔒' : '🔓'}</Text>
-              </Pressable>
-            </View>
-            {createProductError ? <Text style={styles.modalError}>{createProductError}</Text> : null}
-            {loadingProductGroups ? <ActivityIndicator color="#0A8F5A" /> : null}
-
-            <Text style={styles.modalLabel}>Cantidad para este lote</Text>
-            <View style={styles.qtyRow}>
-              <Pressable
-                style={styles.qtyStepBtn}
-                onPress={() => {
-                  const current = Number(newProductQty) || 1;
-                  setNewProductQty(String(Math.max(1, current - 1)));
-                }}
-              >
-                <Text style={styles.qtyStepText}>-</Text>
-              </Pressable>
-              <TextInput
-                value={newProductQty}
-                onChangeText={setNewProductQty}
-                style={[styles.modalInput, styles.qtyInput]}
-                keyboardType="numeric"
-              />
-              <Pressable
-                style={styles.qtyStepBtn}
-                onPress={() => {
-                  const current = Number(newProductQty) || 1;
-                  setNewProductQty(String(current + 1));
-                }}
-              >
-                <Text style={styles.qtyStepText}>+</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.modalActions}>
-              <Pressable style={styles.cancelButton} onPress={closeCreateProductModal} disabled={creatingProduct}>
-                <Text style={styles.cancelButtonText}>Cancelar</Text>
-              </Pressable>
-              <Pressable
-                style={styles.saveButton}
-                onPress={handleCreateAndAddProduct}
-                disabled={creatingProduct || loadingProductCodes || loadingProductGroups || !canMutate}
-              >
-                <Text style={styles.saveButtonText}>
-                  {loadingProductCodes || loadingProductGroups
-                    ? 'Validando conexión...'
-                    : creatingProduct
-                      ? 'Creando...'
-                      : 'Crear y agregar'}
-                </Text>
-              </Pressable>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -1741,8 +1876,55 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   duplicateRow: {
+    borderRadius: 10,
     gap: 2,
-    paddingVertical: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+  },
+  duplicateRowSelected: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  selectedProductCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#9ED9B3',
+    backgroundColor: '#ECFDF3',
+    padding: 12,
+    gap: 6,
+  },
+  selectedProductHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  selectedProductHeaderText: {
+    flex: 1,
+    gap: 2,
+  },
+  selectedProductName: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  selectedProductClearButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#9ED9B3',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  selectedProductClearText: {
+    color: '#0A8F5A',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  selectedProductMeta: {
+    color: '#065F46',
+    fontSize: 12,
   },
   duplicateName: {
     color: '#0F172A',
@@ -1895,6 +2077,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 18,
   },
+  modalKeyboardAvoiding: {
+    width: '100%',
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   modalCard: {
     backgroundColor: '#F8FAFC',
     borderRadius: 16,
@@ -1903,16 +2091,43 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 10,
   },
+  modalCardScrollable: {
+    width: '100%',
+    maxWidth: 760,
+    maxHeight: '92%',
+    overflow: 'hidden',
+    flex: 1,
+    alignSelf: 'stretch',
+    flexDirection: 'column',
+  },
+  modalCardScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  modalCardScrollContent: {
+    flexGrow: 1,
+    gap: 10,
+    paddingBottom: 12,
+  },
   modalTitle: {
     color: '#0F172A',
     fontSize: 20,
     fontWeight: '700',
   },
   modalActions: {
-    marginTop: 4,
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 8,
+  },
+  createModalFooter: {
+    borderTopWidth: 1,
+    borderTopColor: '#D8DFEA',
+    paddingTop: 12,
+    marginTop: 12,
+    gap: 12,
+  },
+  qtyFooterBlock: {
+    gap: 6,
   },
   cancelButton: {
     backgroundColor: '#E2E8F0',

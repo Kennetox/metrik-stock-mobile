@@ -1,0 +1,1074 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+
+import { useAppSession } from '../contexts/AppSessionContext';
+import {
+  listInventoryProducts,
+  type InventoryProductPage,
+  type InventoryProductRow,
+} from '../services/api/inventory';
+
+type StockStatus = 'healthy' | 'low' | 'critical' | 'negative';
+type SortOption = 'stock_desc' | 'stock_asc' | 'name_asc' | 'sku_asc';
+type ViewMode = 'cards' | 'table';
+
+function formatQty(value?: number | null): string {
+  return new Intl.NumberFormat('es-CO', {
+    maximumFractionDigits: 0,
+  }).format(Number(value ?? 0));
+}
+
+function formatMoney(value?: number | null): string {
+  return new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    maximumFractionDigits: 0,
+  }).format(Number(value ?? 0));
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('es-CO', {
+    timeZone: 'America/Bogota',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function displayGroup(product: InventoryProductRow): string {
+  return product.group_name || 'Sin categoría';
+}
+
+function resolveStockStatus(product: InventoryProductRow): StockStatus {
+  const qty = Number(product.qty_on_hand ?? 0);
+  if (qty < 0) return 'negative';
+  if (product.status === 'critical') return 'critical';
+  if (product.status === 'low') return 'low';
+  return 'healthy';
+}
+
+function statusMeta(status: StockStatus) {
+  if (status === 'negative') {
+    return {
+      label: 'Negativo',
+      color: '#BE123C',
+      borderColor: '#FDA4AF',
+      backgroundColor: '#FFF1F2',
+      accentBackground: '#FFE4E6',
+    };
+  }
+  if (status === 'critical') {
+    return {
+      label: 'Crítico',
+      color: '#B45309',
+      borderColor: '#FCD34D',
+      backgroundColor: '#FFFBEB',
+      accentBackground: '#FEF3C7',
+    };
+  }
+  if (status === 'low') {
+    return {
+      label: 'Bajo stock',
+      color: '#C2410C',
+      borderColor: '#FBBF24',
+      backgroundColor: '#FFF7ED',
+      accentBackground: '#FFEDD5',
+    };
+  }
+  return {
+    label: 'Saludable',
+    color: '#047857',
+    borderColor: '#6EE7B7',
+    backgroundColor: '#ECFDF5',
+    accentBackground: '#D1FAE5',
+  };
+}
+
+export function StockLevelsScreen() {
+  const { width } = useWindowDimensions();
+  const { apiClient, syncStatus } = useAppSession();
+  const [inventoryPage, setInventoryPage] = useState<InventoryProductPage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | StockStatus>('all');
+  const [sortBy, setSortBy] = useState<SortOption>('stock_desc');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(width >= 900 ? 'table' : 'cards');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(100);
+  const requestIdRef = useRef(0);
+
+  const canRetry = syncStatus === 'online' || syncStatus === 'degraded';
+
+  const loadData = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    setError(null);
+    try {
+      const statusQuery =
+        statusFilter === 'healthy'
+          ? 'ok'
+          : statusFilter === 'low'
+            ? 'low'
+            : statusFilter === 'critical'
+              ? 'critical'
+              : statusFilter === 'negative'
+                ? 'negative'
+                : 'all';
+
+      const response = await listInventoryProducts(apiClient, {
+        skip: (currentPage - 1) * pageSize,
+        limit: pageSize,
+        search: search.trim() || undefined,
+        status: statusQuery,
+        sort: sortBy,
+      });
+      if (requestId === requestIdRef.current) {
+        setInventoryPage(response);
+      }
+    } catch (err) {
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'No se pudo cargar el inventario');
+    }
+  }, [apiClient, currentPage, pageSize, search, sortBy, statusFilter]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    const timer = setTimeout(() => {
+      loadData().finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
+    }, 150);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+    // apiClient is stable through context; if it changes, the effect should reload.
+  }, [loadData]);
+
+  const refreshStockData = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadData();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadData]);
+  const pageItems = inventoryPage?.items ?? [];
+  const totalProducts = inventoryPage?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalProducts / pageSize));
+  const pageStart = totalProducts === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageEnd = Math.min(currentPage * pageSize, totalProducts);
+
+  const hasFilters = Boolean(search.trim()) || statusFilter !== 'all' || sortBy !== 'stock_desc';
+  const isTableMode = viewMode === 'table';
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.hero}>
+        <View style={styles.heroTextWrap}>
+          <Text style={styles.title}>Niveles de stock</Text>
+          <Text style={styles.subtitle}>
+            Vista rápida del inventario con colores por nivel y búsqueda directa por producto.
+          </Text>
+        </View>
+        <Pressable
+          style={[styles.refreshButton, refreshing ? styles.refreshButtonDisabled : null]}
+          onPress={() => {
+            refreshStockData().catch(() => undefined);
+          }}
+          disabled={refreshing || !canRetry}
+        >
+          {refreshing ? (
+            <ActivityIndicator size="small" color="#0F172A" />
+          ) : (
+            <Text style={styles.refreshText}>Actualizar</Text>
+          )}
+        </Pressable>
+      </View>
+
+      <View style={styles.searchRow}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Buscar por nombre, SKU, código o categoría"
+          placeholderTextColor="#94A3B8"
+          value={search}
+          onChangeText={(value) => {
+            setCurrentPage(1);
+            setSearch(value);
+          }}
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+        {hasFilters ? (
+          <Pressable
+            style={styles.clearButton}
+            onPress={() => {
+              setCurrentPage(1);
+              setSearch('');
+              setStatusFilter('all');
+              setSortBy('stock_desc');
+            }}
+          >
+            <Text style={styles.clearButtonText}>Limpiar</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      <View style={styles.controlsBar}>
+        <View style={styles.paginationCompact}>
+          <Text style={styles.paginationText}>
+            Página {currentPage} de {totalPages} · {pageStart}-{pageEnd} de {totalProducts}
+          </Text>
+          <View style={styles.paginationButtons}>
+            <Pressable
+              style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+              onPress={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+            >
+              <Text style={styles.paginationButtonText}>Primera</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+              onPress={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+            >
+              <Text style={styles.paginationButtonText}>Anterior</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+              onPress={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+            >
+              <Text style={styles.paginationButtonText}>Siguiente</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+              onPress={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+            >
+              <Text style={styles.paginationButtonText}>Última</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={styles.controlsRight}>
+          <Pressable
+            style={[styles.advancedToggleButton, showAdvancedFilters ? styles.advancedToggleButtonActive : null]}
+            onPress={() => setShowAdvancedFilters((prev) => !prev)}
+          >
+            <Text
+              style={[
+                styles.advancedToggleText,
+                showAdvancedFilters ? styles.advancedToggleTextActive : null,
+              ]}
+            >
+              {showAdvancedFilters ? 'Ocultar filtros' : 'Mostrar filtros'}
+            </Text>
+          </Pressable>
+
+          <View style={styles.modeRow}>
+            <Pressable
+              style={[styles.modeButton, !isTableMode ? styles.modeButtonActive : null]}
+              onPress={() => setViewMode('cards')}
+            >
+              <Text style={[styles.modeButtonText, !isTableMode ? styles.modeButtonTextActive : null]}>
+                Cards
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeButton, isTableMode ? styles.modeButtonActive : null]}
+              onPress={() => setViewMode('table')}
+            >
+              <Text style={[styles.modeButtonText, isTableMode ? styles.modeButtonTextActive : null]}>
+                Tabla
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+
+      {showAdvancedFilters ? (
+        <View style={styles.filtersCard}>
+          <View style={styles.filterRow}>
+            <FilterButton
+              label="Todos"
+              active={statusFilter === 'all'}
+              onPress={() => {
+                setCurrentPage(1);
+                setStatusFilter('all');
+              }}
+            />
+            <FilterButton
+              label="Saludable"
+              active={statusFilter === 'healthy'}
+              onPress={() => {
+                setCurrentPage(1);
+                setStatusFilter('healthy');
+              }}
+            />
+            <FilterButton
+              label="Bajo"
+              active={statusFilter === 'low'}
+              onPress={() => {
+                setCurrentPage(1);
+                setStatusFilter('low');
+              }}
+            />
+            <FilterButton
+              label="Crítico"
+              active={statusFilter === 'critical'}
+              onPress={() => {
+                setCurrentPage(1);
+                setStatusFilter('critical');
+              }}
+            />
+            <FilterButton
+              label="Negativo"
+              active={statusFilter === 'negative'}
+              onPress={() => {
+                setCurrentPage(1);
+                setStatusFilter('negative');
+              }}
+            />
+          </View>
+
+          <View style={styles.sortRow}>
+            <FilterButton
+              label="Stock desc"
+              active={sortBy === 'stock_desc'}
+              onPress={() => {
+                setCurrentPage(1);
+                setSortBy('stock_desc');
+              }}
+            />
+            <FilterButton
+              label="Stock asc"
+              active={sortBy === 'stock_asc'}
+              onPress={() => {
+                setCurrentPage(1);
+                setSortBy('stock_asc');
+              }}
+            />
+            <FilterButton
+              label="Nombre"
+              active={sortBy === 'name_asc'}
+              onPress={() => {
+                setCurrentPage(1);
+                setSortBy('name_asc');
+              }}
+            />
+            <FilterButton
+              label="SKU"
+              active={sortBy === 'sku_asc'}
+              onPress={() => {
+                setCurrentPage(1);
+                setSortBy('sku_asc');
+              }}
+            />
+          </View>
+        </View>
+      ) : null}
+
+      {isTableMode ? (
+        <StockTableCard
+          loading={loading}
+          error={error}
+          canRetry={canRetry}
+          refreshing={refreshing}
+          filteredProducts={pageItems}
+          onRefresh={refreshStockData}
+        />
+      ) : (
+        <View style={styles.listCard}>
+          <View style={styles.listHeader}>
+            <Text style={styles.listHeaderTitle}>Producto</Text>
+            <Text style={styles.listHeaderTitle}>Stock</Text>
+          </View>
+
+          {loading ? (
+            <View style={styles.stateWrap}>
+              <ActivityIndicator size="large" color="#0A8F5A" />
+              <Text style={styles.stateText}>Cargando inventario...</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.stateWrap}>
+              <Text style={styles.stateError}>{error}</Text>
+              <Pressable style={styles.retryButton} onPress={() => refreshStockData().catch(() => undefined)} disabled={!canRetry}>
+                <Text style={styles.retryButtonText}>Reintentar</Text>
+              </Pressable>
+            </View>
+          ) : pageItems.length === 0 ? (
+            <View style={styles.stateWrap}>
+              <Text style={styles.stateText}>No hay productos para esos filtros.</Text>
+            </View>
+          ) : (
+          <FlatList
+            style={styles.cardsList}
+            data={pageItems}
+            keyExtractor={(item) => String(item.product_id)}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => {
+                  refreshStockData().catch(() => undefined);
+                }}
+                tintColor="#0A8F5A"
+              />
+            }
+            renderItem={({ item }) => <StockCardRow product={item} />}
+            ItemSeparatorComponent={RowSeparator}
+            contentContainerStyle={styles.listContent}
+            nestedScrollEnabled
+            />
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function StockCardRow({ product }: { product: InventoryProductRow }) {
+  const status = resolveStockStatus(product);
+  const meta = statusMeta(status);
+  const qty = Number(product.qty_on_hand ?? 0);
+  const totalCost = Number(product.cost ?? 0) * qty;
+  const totalPrice = Number(product.price ?? 0) * qty;
+
+  return (
+    <View
+      style={[
+        styles.rowCard,
+        {
+          backgroundColor: meta.backgroundColor,
+          borderColor: meta.borderColor,
+        },
+      ]}
+    >
+      <View style={styles.rowTop}>
+        <View style={styles.rowMain}>
+          <Text style={styles.productName} numberOfLines={2}>
+            {product.product_name}
+          </Text>
+          <Text style={styles.rowSubText} numberOfLines={1}>
+            SKU: {product.sku || 'Sin SKU'} · {displayGroup(product)}
+          </Text>
+        </View>
+
+        <View style={[styles.statusChip, { borderColor: meta.borderColor, backgroundColor: meta.accentBackground }]}>
+          <Text style={[styles.statusChipText, { color: meta.color }]}>{meta.label}</Text>
+        </View>
+      </View>
+
+      <View style={styles.metricsRow}>
+        <Metric label="Stock" value={formatQty(qty)} valueColor={qty < 0 ? '#BE123C' : '#0F172A'} />
+        <Metric label="Costo stock" value={formatMoney(totalCost)} valueColor={totalCost < 0 ? '#BE123C' : '#334155'} />
+        <Metric label="Precio stock" value={formatMoney(totalPrice)} valueColor={totalPrice < 0 ? '#BE123C' : '#334155'} />
+      </View>
+
+      {product.last_movement_at ? (
+        <Text style={styles.thresholdText}>Último mov.: {formatDate(product.last_movement_at)}</Text>
+      ) : (
+        <Text style={styles.thresholdText}>Sin último movimiento registrado</Text>
+      )}
+    </View>
+  );
+}
+
+function StockTableCard({
+  loading,
+  error,
+  canRetry,
+  refreshing,
+  filteredProducts,
+  onRefresh,
+}: {
+  loading: boolean;
+  error: string | null;
+  canRetry: boolean;
+  refreshing: boolean;
+  filteredProducts: InventoryProductRow[];
+  onRefresh: () => Promise<void>;
+}) {
+  return (
+    <View style={styles.listCard}>
+      <View style={styles.tableHeader}>
+        <Text style={[styles.listHeaderTitle, styles.tableTitleCell]}>Producto</Text>
+        <Text style={[styles.listHeaderTitle, styles.tableSkuCell]}>SKU</Text>
+        <Text style={[styles.listHeaderTitle, styles.tableGroupCell]}>Grupo</Text>
+        <Text style={[styles.listHeaderTitle, styles.tableStockCell]}>Stock</Text>
+        <Text style={[styles.listHeaderTitle, styles.tableStateCell]}>Estado</Text>
+        <Text style={[styles.listHeaderTitle, styles.tableUnitCell]}>Costo unit.</Text>
+        <Text style={[styles.listHeaderTitle, styles.tableUnitCell]}>Precio unit.</Text>
+        <Text style={[styles.listHeaderTitle, styles.tableLastCell]}>Último mov.</Text>
+      </View>
+
+      {loading ? (
+        <View style={styles.stateWrap}>
+          <ActivityIndicator size="large" color="#0A8F5A" />
+          <Text style={styles.stateText}>Cargando inventario...</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.stateWrap}>
+          <Text style={styles.stateError}>{error}</Text>
+          <Pressable style={styles.retryButton} onPress={() => onRefresh().catch(() => undefined)} disabled={!canRetry}>
+            <Text style={styles.retryButtonText}>Reintentar</Text>
+          </Pressable>
+        </View>
+      ) : filteredProducts.length === 0 ? (
+        <View style={styles.stateWrap}>
+          <Text style={styles.stateText}>No hay productos para esos filtros.</Text>
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.tableScroll}
+          horizontal
+          nestedScrollEnabled
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                onRefresh().catch(() => undefined);
+              }}
+              tintColor="#0A8F5A"
+            />
+          }
+        >
+          <FlatList
+            style={styles.tableList}
+            data={filteredProducts}
+            keyExtractor={(item) => String(item.product_id)}
+            renderItem={({ item }) => <StockTableRow product={item} />}
+            ItemSeparatorComponent={RowSeparator}
+            contentContainerStyle={styles.tableBodyWrap}
+            nestedScrollEnabled
+          />
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+function StockTableRow({ product }: { product: InventoryProductRow }) {
+  const status = resolveStockStatus(product);
+  const meta = statusMeta(status);
+  const qty = Number(product.qty_on_hand ?? 0);
+
+  return (
+    <View style={[styles.tableRow, { backgroundColor: meta.backgroundColor, borderColor: meta.borderColor }]}>
+      <View style={styles.tableTitleCell}>
+        <Text style={styles.tableProductName} numberOfLines={1}>
+          {product.product_name}
+        </Text>
+      </View>
+      <View style={styles.tableSkuCell}>
+        <Text style={styles.tableCellText} numberOfLines={1}>
+          {product.sku || '—'}
+        </Text>
+      </View>
+      <View style={styles.tableGroupCell}>
+        <Text style={styles.tableCellText} numberOfLines={1}>
+          {displayGroup(product)}
+        </Text>
+      </View>
+      <View style={styles.tableStockCell}>
+        <Text style={[styles.tableCellText, styles.tableStockValue, qty < 0 ? styles.negativeText : null]}>
+          {formatQty(qty)}
+        </Text>
+      </View>
+      <View style={styles.tableStateCell}>
+        <View style={[styles.statusChip, styles.tableStatusChip, { borderColor: meta.borderColor, backgroundColor: meta.accentBackground }]}>
+          <Text style={[styles.statusChipText, { color: meta.color }]}>{meta.label}</Text>
+        </View>
+      </View>
+      <View style={styles.tableUnitCell}>
+        <Text style={styles.tableCellText}>{formatMoney(product.cost)}</Text>
+      </View>
+      <View style={styles.tableUnitCell}>
+        <Text style={styles.tableCellText}>{formatMoney(product.price)}</Text>
+      </View>
+      <View style={styles.tableLastCell}>
+        <Text style={styles.tableCellText} numberOfLines={1}>
+          {product.last_movement_at ? formatDate(product.last_movement_at) : '—'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  valueColor,
+}: {
+  label: string;
+  value: string;
+  valueColor: string;
+}) {
+  return (
+    <View style={styles.metricBox}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={[styles.metricValue, { color: valueColor }]} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function FilterButton({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={[styles.filterButton, active ? styles.filterButtonActive : null]} onPress={onPress}>
+      <Text style={[styles.filterButtonText, active ? styles.filterButtonTextActive : null]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function RowSeparator() {
+  return <View style={styles.rowSeparator} />;
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 8,
+    gap: 12,
+  },
+  hero: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  heroTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  title: {
+    color: '#0F172A',
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  subtitle: {
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  refreshButton: {
+    minWidth: 104,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  refreshButtonDisabled: {
+    opacity: 0.7,
+  },
+  refreshText: {
+    color: '#0F172A',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  controlsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  paginationCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 1,
+    flexWrap: 'wrap',
+  },
+  controlsRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 0,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
+  modeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  modeButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  modeButtonActive: {
+    borderColor: '#9ED9B3',
+    backgroundColor: '#DCEFE3',
+  },
+  modeButtonText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  modeButtonTextActive: {
+    color: '#0A8F5A',
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  filtersCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D8DFEA',
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    gap: 10,
+  },
+  searchInput: {
+    flex: 1,
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    color: '#0F172A',
+    paddingHorizontal: 14,
+    fontSize: 15,
+  },
+  advancedToggleButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  advancedToggleButtonActive: {
+    borderColor: '#9ED9B3',
+    backgroundColor: '#DCEFE3',
+  },
+  advancedToggleText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  advancedToggleTextActive: {
+    color: '#0A8F5A',
+  },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  sortRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  filterButtonActive: {
+    borderColor: '#9ED9B3',
+    backgroundColor: '#DCEFE3',
+  },
+  filterButtonText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  filterButtonTextActive: {
+    color: '#0A8F5A',
+  },
+  clearButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  clearButtonText: {
+    color: '#334155',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  listCard: {
+    flex: 1,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D8DFEA',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  listHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  listHeaderTitle: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  stateWrap: {
+    paddingHorizontal: 16,
+    paddingVertical: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  stateText: {
+    color: '#475569',
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  stateError: {
+    color: '#BE123C',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  retryButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#9ED9B3',
+    backgroundColor: '#DCEFE3',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  retryButtonText: {
+    color: '#0A8F5A',
+    fontWeight: '800',
+  },
+  listContent: {
+    padding: 12,
+    gap: 10,
+  },
+  cardsList: {
+    flex: 1,
+  },
+  paginationText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  paginationButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'flex-end',
+  },
+  paginationButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  paginationButtonDisabled: {
+    opacity: 0.45,
+  },
+  paginationButtonText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    minWidth: 1160,
+  },
+  tableScroll: {
+    flex: 1,
+  },
+  tableList: {
+    flex: 1,
+  },
+  tableBodyWrap: {
+    minWidth: 1160,
+    padding: 12,
+    gap: 8,
+  },
+  tableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 74,
+  },
+  tableTitleCell: {
+    width: 260,
+    paddingRight: 10,
+  },
+  tableSkuCell: {
+    width: 104,
+    paddingRight: 10,
+  },
+  tableGroupCell: {
+    width: 180,
+    paddingRight: 10,
+  },
+  tableStockCell: {
+    width: 90,
+    paddingRight: 10,
+  },
+  tableStateCell: {
+    width: 120,
+    paddingRight: 10,
+  },
+  tableUnitCell: {
+    width: 138,
+    paddingRight: 10,
+  },
+  tableLastCell: {
+    width: 160,
+    paddingRight: 10,
+  },
+  tableProductName: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  tableCellText: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tableStockValue: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  tableStatusChip: {
+    alignSelf: 'flex-start',
+  },
+  rowSeparator: {
+    height: 0,
+  },
+  rowCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+    gap: 10,
+  },
+  rowTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  rowMain: {
+    flex: 1,
+    gap: 4,
+  },
+  productName: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  rowSubText: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    alignSelf: 'flex-start',
+  },
+  statusChipText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  metricBox: {
+    flex: 1,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.66)',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    gap: 2,
+  },
+  metricLabel: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  metricValue: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  thresholdText: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  negativeText: {
+    color: '#BE123C',
+  },
+});
