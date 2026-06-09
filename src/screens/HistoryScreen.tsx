@@ -9,7 +9,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 
@@ -19,6 +18,7 @@ import { getLotDetail, listReceivingCreatedProducts, listReceivingDocuments } fr
 import type { RecountDetail, RecountRecord } from '../types/recounts';
 import type { ReceivingCreatedProduct, ReceivingDocument, ReceivingLotDetail } from '../types/receiving';
 import { ScreenContainer } from '../ui/ScreenContainer';
+import { SearchInput } from '../ui/SearchInput';
 
 function formatPurchaseType(type: string) {
   if (type === 'cash') return 'Contado';
@@ -654,10 +654,11 @@ export function HistoryScreen() {
               {loading ? <ActivityIndicator color="#0A8F5A" /> : null}
               {error ? <Text style={styles.error}>{error}</Text> : null}
               <View style={styles.filtersCard}>
-                <TextInput
+                <SearchInput
                   value={query}
                   onChangeText={setQuery}
-                  style={styles.searchInput}
+                  onClear={() => setQuery('')}
+                  containerStyle={styles.searchInput}
                   placeholder={
                     tab === 'documents'
                       ? 'Buscar por lote/recuento, origen, responsable o proveedor'

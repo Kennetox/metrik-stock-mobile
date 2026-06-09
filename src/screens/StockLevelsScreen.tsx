@@ -7,13 +7,14 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   Modal,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
 import { useAppSession } from '../contexts/AppSessionContext';
 import { TableFocusSection } from '../ui/TableFocusSection';
+import { SearchInput } from '../ui/SearchInput';
 import {
   listInventoryProducts,
   type InventoryProductPage,
@@ -27,6 +28,12 @@ type ViewMode = 'cards' | 'table';
 type SortMenuOption = {
   value: SortOption;
   label: string;
+};
+type PeekPreview = {
+  label: string;
+  value: string;
+  x: number;
+  y: number;
 };
 
 const SORT_OPTIONS: SortMenuOption[] = [
@@ -117,6 +124,7 @@ function statusMeta(status: StockStatus) {
 }
 
 export function StockLevelsScreen() {
+  const { width, height } = useWindowDimensions();
   const { apiClient, syncStatus } = useAppSession();
   const [inventoryPage, setInventoryPage] = useState<InventoryProductPage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -131,6 +139,7 @@ export function StockLevelsScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(100);
+  const [peekPreview, setPeekPreview] = useState<PeekPreview | null>(null);
   const requestIdRef = useRef(0);
 
   const canRetry = syncStatus === 'online' || syncStatus === 'degraded';
@@ -202,6 +211,22 @@ export function StockLevelsScreen() {
   const hasFilters = Boolean(search.trim()) || statusFilter !== 'all' || sortBy !== 'stock_desc';
   const isTableMode = viewMode === 'table';
 
+  const showPeekPreview = useCallback((preview: PeekPreview) => {
+    setPeekPreview(preview);
+  }, []);
+
+  const hidePeekPreview = useCallback(() => {
+    setPeekPreview(null);
+  }, []);
+
+  useEffect(() => {
+    if (!peekPreview) return undefined;
+    const timer = setTimeout(() => {
+      setPeekPreview(null);
+    }, 1600);
+    return () => clearTimeout(timer);
+  }, [peekPreview]);
+
   useEffect(() => {
     setShowTopPanel(true);
   }, []);
@@ -238,8 +263,7 @@ export function StockLevelsScreen() {
         </View>
 
         <View style={styles.searchRow}>
-          <TextInput
-            style={styles.searchInput}
+          <SearchInput
             placeholder="Buscar por nombre, SKU, código o categoría"
             placeholderTextColor="#94A3B8"
             value={search}
@@ -247,6 +271,11 @@ export function StockLevelsScreen() {
               setCurrentPage(1);
               setSearch(value);
             }}
+            onClear={() => {
+              setCurrentPage(1);
+              setSearch('');
+            }}
+            containerStyle={styles.searchInput}
             autoCorrect={false}
             autoCapitalize="none"
           />
@@ -403,6 +432,8 @@ export function StockLevelsScreen() {
           refreshing={refreshing}
           filteredProducts={pageItems}
           onRefresh={refreshStockData}
+          onPeekText={showPeekPreview}
+          onDismissPeek={hidePeekPreview}
         />
       ) : (
         <View style={styles.listCard}>
@@ -441,14 +472,35 @@ export function StockLevelsScreen() {
                 tintColor="#0A8F5A"
               />
             }
-            renderItem={({ item }) => <StockCardRow product={item} />}
+            renderItem={({ item }) => <StockCardRow product={item} onPeekText={showPeekPreview} />}
             ItemSeparatorComponent={RowSeparator}
             contentContainerStyle={styles.listContent}
             nestedScrollEnabled
+            onScrollBeginDrag={hidePeekPreview}
             />
           )}
         </View>
       )}
+
+      {peekPreview ? (
+        <View style={styles.peekOverlay} pointerEvents="box-none">
+          <Pressable style={StyleSheet.absoluteFill} onPress={hidePeekPreview} />
+          <View
+            style={[
+              styles.peekCard,
+              {
+                left: Math.max(16, Math.min(peekPreview.x - 168, width - 336)),
+                top: Math.max(72, Math.min(peekPreview.y + 14, height - 132)),
+              },
+            ]}
+            pointerEvents="none"
+          >
+            <Text style={styles.peekLabel}>{peekPreview.label}</Text>
+            <Text style={styles.peekValue}>{peekPreview.value}</Text>
+            <Text style={styles.peekHint}>Toque fuera o deslice para cerrar</Text>
+          </View>
+        </View>
+      ) : null}
 
       <Modal visible={showSortPicker} transparent animationType="fade" onRequestClose={() => setShowSortPicker(false)}>
         <View style={styles.modalBackdrop}>
@@ -484,7 +536,13 @@ export function StockLevelsScreen() {
   );
 }
 
-function StockCardRow({ product }: { product: InventoryProductRow }) {
+function StockCardRow({
+  product,
+  onPeekText,
+}: {
+  product: InventoryProductRow;
+  onPeekText: (preview: PeekPreview) => void;
+}) {
   const status = resolveStockStatus(product);
   const meta = statusMeta(status);
   const qty = Number(product.qty_on_hand ?? 0);
@@ -503,9 +561,13 @@ function StockCardRow({ product }: { product: InventoryProductRow }) {
     >
       <View style={styles.rowTop}>
         <View style={styles.rowMain}>
-          <Text style={styles.productName} numberOfLines={2}>
-            {product.product_name}
-          </Text>
+          <PeekableText
+            label="Nombre"
+            value={product.product_name}
+            style={styles.productName}
+            numberOfLines={2}
+            onPeekText={onPeekText}
+          />
           <Text style={styles.rowSubText} numberOfLines={1}>
             SKU: {product.sku || 'Sin SKU'} · {displayGroup(product)}
           </Text>
@@ -538,6 +600,8 @@ function StockTableCard({
   refreshing,
   filteredProducts,
   onRefresh,
+  onPeekText,
+  onDismissPeek,
 }: {
   loading: boolean;
   error: string | null;
@@ -545,6 +609,8 @@ function StockTableCard({
   refreshing: boolean;
   filteredProducts: InventoryProductRow[];
   onRefresh: () => Promise<void>;
+  onPeekText: (preview: PeekPreview) => void;
+  onDismissPeek: () => void;
 }) {
   return (
     <View style={styles.listCard}>
@@ -569,6 +635,7 @@ function StockTableCard({
           style={styles.tableScroll}
           horizontal
           nestedScrollEnabled
+          onScrollBeginDrag={onDismissPeek}
           contentContainerStyle={styles.tableScrollContent}
           refreshControl={
             <RefreshControl
@@ -598,10 +665,11 @@ function StockTableCard({
               style={styles.tableList}
               data={filteredProducts}
               keyExtractor={(item) => String(item.product_id)}
-              renderItem={({ item }) => <StockTableRow product={item} />}
+              renderItem={({ item }) => <StockTableRow product={item} onPeekText={onPeekText} />}
               ItemSeparatorComponent={RowSeparator}
               contentContainerStyle={styles.tableBodyWrap}
               nestedScrollEnabled
+              onScrollBeginDrag={onDismissPeek}
             />
           </View>
         </ScrollView>
@@ -610,7 +678,13 @@ function StockTableCard({
   );
 }
 
-function StockTableRow({ product }: { product: InventoryProductRow }) {
+function StockTableRow({
+  product,
+  onPeekText,
+}: {
+  product: InventoryProductRow;
+  onPeekText: (preview: PeekPreview) => void;
+}) {
   const status = resolveStockStatus(product);
   const meta = statusMeta(status);
   const qty = Number(product.qty_on_hand ?? 0);
@@ -620,9 +694,7 @@ function StockTableRow({ product }: { product: InventoryProductRow }) {
   return (
     <View style={[styles.tableRow, { backgroundColor: meta.backgroundColor, borderColor: meta.borderColor }]}>
       <View style={styles.tableTitleCell}>
-        <Text style={styles.tableProductName} numberOfLines={1}>
-          {product.product_name}
-        </Text>
+        <PeekableText label="Nombre" value={product.product_name} style={styles.tableProductName} onPeekText={onPeekText} />
       </View>
       <View style={styles.tableSkuCell}>
         <Text style={styles.tableCellText} numberOfLines={1}>
@@ -630,9 +702,13 @@ function StockTableRow({ product }: { product: InventoryProductRow }) {
         </Text>
       </View>
       <View style={styles.tableGroupCell}>
-        <Text style={styles.tableCellText} numberOfLines={1}>
-          {displayGroup(product)}
-        </Text>
+        <PeekableText
+          label="Grupo"
+          value={displayGroup(product)}
+          style={styles.tableCellText}
+          numberOfLines={1}
+          onPeekText={onPeekText}
+        />
       </View>
       <View style={styles.tableStockCell}>
         <Text style={[styles.tableCellText, styles.tableStockValue, qty < 0 ? styles.negativeText : null]}>
@@ -661,9 +737,13 @@ function StockTableRow({ product }: { product: InventoryProductRow }) {
         </Text>
       </View>
       <View style={styles.tableLastCell}>
-        <Text style={styles.tableCellText} numberOfLines={1}>
-          {product.last_movement_at ? formatDate(product.last_movement_at) : '—'}
-        </Text>
+        <PeekableText
+          label="Último movimiento"
+          value={product.last_movement_at ? formatDate(product.last_movement_at) : '—'}
+          style={styles.tableCellText}
+          numberOfLines={1}
+          onPeekText={onPeekText}
+        />
       </View>
     </View>
   );
@@ -706,6 +786,39 @@ function FilterButton({
 
 function RowSeparator() {
   return <View style={styles.rowSeparator} />;
+}
+
+function PeekableText({
+  label,
+  value,
+  style,
+  numberOfLines,
+  onPeekText,
+}: {
+  label: string;
+  value: string;
+  style: any;
+  numberOfLines?: number;
+  onPeekText: (preview: PeekPreview) => void;
+}) {
+  return (
+    <Pressable
+      style={styles.peekTextTouchTarget}
+      delayLongPress={240}
+      onLongPress={(event) => {
+        onPeekText({
+          label,
+          value,
+          x: event.nativeEvent.pageX,
+          y: event.nativeEvent.pageY,
+        });
+      }}
+    >
+      <Text style={style} numberOfLines={numberOfLines}>
+        {value}
+      </Text>
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -1142,6 +1255,50 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontSize: 14,
     fontWeight: '800',
+  },
+  peekTextTouchTarget: {
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+  },
+  peekOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 30,
+    elevation: 30,
+  },
+  peekCard: {
+    position: 'absolute',
+    width: 320,
+    maxWidth: '88%',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#9ED9B3',
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    shadowColor: '#000000',
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
+  },
+  peekLabel: {
+    color: '#9ED9B3',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+  },
+  peekValue: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  peekHint: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    marginTop: 8,
   },
   tableCellText: {
     color: '#334155',

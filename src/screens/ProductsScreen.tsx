@@ -15,6 +15,7 @@ import {
 
 import { useAppSession } from '../contexts/AppSessionContext';
 import { ScreenContainer } from '../ui/ScreenContainer';
+import { SearchInput } from '../ui/SearchInput';
 import { TableFocusSection } from '../ui/TableFocusSection';
 import {
   createProduct,
@@ -788,10 +789,17 @@ export function ProductsScreen() {
           ) : null}
 
           <View style={styles.filtersCard}>
-            <TextInput
+            <SearchInput
               value={query}
-              onChangeText={setQuery}
-              style={styles.searchInput}
+              onChangeText={(value) => {
+                setCurrentPage(1);
+                setQuery(value);
+              }}
+              onClear={() => {
+                setCurrentPage(1);
+                setQuery('');
+              }}
+              containerStyle={styles.searchInput}
               placeholder="Buscar por nombre, SKU, barra..."
               placeholderTextColor="#64748B"
               autoCapitalize="none"

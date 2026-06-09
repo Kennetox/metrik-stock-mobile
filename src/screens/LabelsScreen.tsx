@@ -23,6 +23,7 @@ import {
 } from '../services/printing/mobilePrintAgent';
 import type { ReceivingProductLookup } from '../types/receiving';
 import { ScreenContainer } from '../ui/ScreenContainer';
+import { SearchInput } from '../ui/SearchInput';
 
 type PrinterStatus = 'checking' | 'online' | 'offline';
 
@@ -493,13 +494,18 @@ export function LabelsScreen() {
           <Text style={styles.searchHelp}>Busca un producto y selecciónalo.</Text>
 
           <Text style={styles.label}>Buscar producto (nombre / SKU / código de barras)</Text>
-          <TextInput
+          <SearchInput
             value={query}
             onChangeText={(value) => {
               setQuery(value);
               setSelectedProduct(null);
             }}
-            style={styles.input}
+            onClear={() => {
+              setQuery('');
+              setSelectedProduct(null);
+              setRawResults([]);
+            }}
+            containerStyle={styles.input}
             autoCapitalize="none"
             autoCorrect={false}
             placeholder="Ej: speaker 12, SK-100..."
