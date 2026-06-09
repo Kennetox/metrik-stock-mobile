@@ -63,7 +63,12 @@ function statusLabel(status: RecountStatus) {
 function normalizeBarcode(value?: string | null): string {
   const compact = (value ?? '')
     .normalize('NFKC')
-    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .split('')
+    .filter((char) => {
+      const code = char.charCodeAt(0);
+      return code > 31 && code !== 127;
+    })
+    .join('')
     .replace(/\s+/g, '')
     .trim()
     .toLowerCase();
@@ -138,6 +143,21 @@ export function RecountsScreen({
   const [manualSelectedLine, setManualSelectedLine] = useState<ManualResultRow | null>(null);
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [manualLoading, setManualLoading] = useState(false);
+
+  const resolveCountedQty = useCallback(
+    (productId: number, fallback?: number | null): number => {
+      const draft = lineDraft[productId];
+      if (draft != null && draft !== '') {
+        const parsedDraft = Number(draft);
+        if (Number.isFinite(parsedDraft)) {
+          return parsedDraft;
+        }
+      }
+      const parsedFallback = Number(fallback ?? 0);
+      return Number.isFinite(parsedFallback) ? parsedFallback : 0;
+    },
+    [lineDraft],
+  );
   const [autoFollowList, setAutoFollowList] = useState(true);
   const [selectedDocForActions, setSelectedDocForActions] = useState<RecountRecord | null>(null);
   const [showDocActionsModal, setShowDocActionsModal] = useState(false);
@@ -382,7 +402,7 @@ export function RecountsScreen({
     async (line: RecountLine) => {
       if (!canMutate) return;
       if (!selectedId) return;
-      const currentCount = Number(line.counted_qty ?? lineDraft[line.product_id] ?? 0);
+      const currentCount = resolveCountedQty(line.product_id, line.counted_qty);
       const nextCount = Number.isFinite(currentCount) ? currentCount + 1 : 1;
       await upsertRecountLine(apiClient, selectedId, {
         product_id: line.product_id,
@@ -390,7 +410,7 @@ export function RecountsScreen({
       });
       setLineDraft((prev) => ({ ...prev, [line.product_id]: String(nextCount) }));
     },
-    [apiClient, canMutate, lineDraft, selectedId],
+    [apiClient, canMutate, resolveCountedQty, selectedId],
   );
 
   const handleScannedCode = useCallback(async (rawCode: string) => {
@@ -424,7 +444,7 @@ export function RecountsScreen({
           return;
         }
 
-        const currentCount = Number(lineDraft[picked.id] ?? 0);
+        const currentCount = resolveCountedQty(picked.id);
         const nextCount = Number.isFinite(currentCount) ? currentCount + 1 : 1;
         await upsertRecountLine(apiClient, selectedId, {
           product_id: picked.id,
@@ -437,7 +457,7 @@ export function RecountsScreen({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo procesar el escaneo');
     }
-  }, [apiClient, canMutate, detail?.lines, incrementLineByOne, lineDraft, loadDetail, loadDocs, selectedId]);
+  }, [apiClient, canMutate, detail?.lines, incrementLineByOne, loadDetail, loadDocs, resolveCountedQty, selectedId]);
 
   const handleCodeScanned = useCallback((codes: Code[]) => {
     if (!scannerOpen || !codes.length) return;
@@ -538,10 +558,10 @@ export function RecountsScreen({
     }
   }
 
-  async function handleSaveLine(productId: number): Promise<boolean> {
+  async function handleSaveLine(productId: number, countedOverride?: string | number): Promise<boolean> {
     if (!ensureCanMutate()) return false;
     if (!selectedId) return false;
-    const raw = lineDraft[productId];
+    const raw = countedOverride ?? lineDraft[productId];
     const counted = Number(raw);
     if (!Number.isFinite(counted) || counted < 0) {
       setError('La cantidad contada debe ser 0 o mayor.');
@@ -578,8 +598,9 @@ export function RecountsScreen({
   }
 
   async function saveEditedLine(productId: number) {
-    setLineDraft((prev) => ({ ...prev, [productId]: editingQty }));
-    const ok = await handleSaveLine(productId);
+    const nextValue = editingQty;
+    setLineDraft((prev) => ({ ...prev, [productId]: nextValue }));
+    const ok = await handleSaveLine(productId, nextValue);
     if (ok) {
       cancelEditLine();
     }
@@ -830,7 +851,7 @@ export function RecountsScreen({
     }
     setManualSubmitting(true);
     try {
-      const currentCount = Number(manualSelectedLine.counted_qty ?? lineDraft[manualSelectedLine.product_id] ?? 0);
+      const currentCount = resolveCountedQty(manualSelectedLine.product_id, manualSelectedLine.counted_qty);
       const next = (Number.isFinite(currentCount) ? currentCount : 0) + qty;
       await upsertRecountLine(apiClient, selectedId, {
         product_id: manualSelectedLine.product_id,
