@@ -24,6 +24,7 @@ import {
   getReceivingNextProductCodes,
   getLotDetail,
   listReceivingProductGroups,
+  markReceivingLotItemLabelsPrinted,
   searchReceivingProductsAll,
   updateReceivingLotItem,
 } from '../services/api/receiving';
@@ -36,6 +37,7 @@ import {
 } from '../services/api/products';
 import type { ReceivingLotDetail, ReceivingProductLookup } from '../types/receiving';
 import { ScreenContainer } from '../ui/ScreenContainer';
+import { SearchInput } from '../ui/SearchInput';
 
 function formatPurchaseType(type: string) {
   if (type === 'cash') return 'Contado';
@@ -272,7 +274,6 @@ export function LotDetailScreen({
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null);
   const [closingLot, setClosingLot] = useState(false);
   const [printingItemId, setPrintingItemId] = useState<number | null>(null);
-  const [mockPrintedByItem, setMockPrintedByItem] = useState<Record<number, number>>({});
   const [showCreateProductModal, setShowCreateProductModal] = useState(false);
   const [newProductName, setNewProductName] = useState('');
   const [previewSku, setPreviewSku] = useState('');
@@ -302,6 +303,7 @@ export function LotDetailScreen({
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const canMutate = syncStatus === 'online' || syncStatus === 'degraded';
   const createProductScrollRef = useRef<ScrollView | null>(null);
+  const workspaceScrollRef = useRef<ScrollView | null>(null);
   const duplicateCheckRequestRef = useRef(0);
 
   function ensureCanMutate(): boolean {
@@ -368,10 +370,10 @@ export function LotDetailScreen({
     if (!detail) return 0;
     return detail.items.reduce((sum, item) => {
       const maxForLine = Math.max(0, Math.ceil(Number(item.qty_received || 0)));
-      const alreadyPrinted = Math.max(0, Math.min(maxForLine, Number(mockPrintedByItem[item.id] || 0)));
+      const alreadyPrinted = Math.max(0, Math.min(maxForLine, Number(item.labels_printed_qty || 0)));
       return sum + alreadyPrinted;
     }, 0);
-  }, [detail, mockPrintedByItem]);
+  }, [detail]);
 
   const pendingLabels = useMemo(() => Math.max(0, totalLabelsRequested - printedLabels), [printedLabels, totalLabelsRequested]);
 
@@ -386,19 +388,6 @@ export function LotDetailScreen({
     }
     return filtered;
   }, [detail, pendingLabels]);
-
-  useEffect(() => {
-    if (!detail) return;
-    setMockPrintedByItem((prev) => {
-      const next: Record<number, number> = {};
-      for (const item of detail.items) {
-        const maxForLine = Math.max(0, Math.ceil(Number(item.qty_received || 0)));
-        const current = Math.max(0, Number(prev[item.id] || 0));
-        next[item.id] = Math.min(current, maxForLine);
-      }
-      return next;
-    });
-  }, [detail]);
 
   const closeSummaryMessage = useMemo(() => {
     if (!detail) {
@@ -537,13 +526,8 @@ export function LotDetailScreen({
     setPrintingItemId(itemId);
     try {
       await printWithBestPath(printerDirectUrl, payload);
-      setMockPrintedByItem((prev) => {
-        const existing = Math.max(0, Number(prev[itemId] || 0));
-        return {
-          ...prev,
-          [itemId]: Math.max(existing, maxForLine),
-        };
-      });
+      await markReceivingLotItemLabelsPrinted(apiClient, lotId, itemId, maxForLine);
+      await loadDetail();
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo imprimir la etiqueta');
@@ -555,6 +539,10 @@ export function LotDetailScreen({
   const productResults = useMemo(() => {
     return sortProductResults(rawResults, productQuery);
   }, [rawResults, productQuery]);
+
+  const orderedItems = useMemo(() => {
+    return detail ? [...detail.items].reverse() : [];
+  }, [detail]);
 
   const filteredProductGroups = useMemo(() => {
     const term = groupSearch.trim().toLowerCase();
@@ -647,6 +635,12 @@ export function LotDetailScreen({
     setSubmittingItem(false);
   }
 
+  function scrollItemsToTop() {
+    requestAnimationFrame(() => {
+      workspaceScrollRef.current?.scrollTo({ y: 0, animated: true });
+    });
+  }
+
   async function openCreateProductModal() {
     if (!ensureCanMutate()) return;
     setError(null);
@@ -735,6 +729,7 @@ export function LotDetailScreen({
         qty_received: qty,
       });
       await loadDetail();
+      scrollItemsToTop();
       setError(null);
       closeAddMode();
       setSubmittingItem(false);
@@ -834,6 +829,7 @@ export function LotDetailScreen({
         qty_received: qty,
       });
       await loadDetail();
+      scrollItemsToTop();
       setError(null);
       closeCreateProductModal();
       closeAddMode();
@@ -933,11 +929,12 @@ export function LotDetailScreen({
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       {detail ? (
-        <ScrollView
-          style={styles.workspaceScroll}
-          contentContainerStyle={styles.workspaceScrollContent}
-          stickyHeaderIndices={[0]}
-          keyboardShouldPersistTaps="handled"
+      <ScrollView
+        ref={workspaceScrollRef}
+        style={styles.workspaceScroll}
+        contentContainerStyle={styles.workspaceScrollContent}
+        stickyHeaderIndices={[0]}
+        keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
         >
           <View style={styles.workspaceSticky}>
@@ -1010,13 +1007,19 @@ export function LotDetailScreen({
               </View>
 
               <Text style={styles.modalLabel}>Buscar producto (nombre / SKU / código de barras)</Text>
-              <TextInput
+              <SearchInput
                 value={productQuery}
                 onChangeText={(value) => {
                   setProductQuery(value);
                   setSelectedProduct(null);
                 }}
-                style={styles.modalInput}
+                onClear={() => {
+                  setProductQuery('');
+                  setSelectedProduct(null);
+                  setRawResults([]);
+                }}
+                containerStyle={styles.searchInputField}
+                style={styles.searchInputText}
                 autoCapitalize="none"
                 autoCorrect={false}
                 placeholder="Ej: speaker 12, SK-100..."
@@ -1114,13 +1117,13 @@ export function LotDetailScreen({
                 <Text style={styles.emptyText}>Aún no hay ítems en este lote.</Text>
               ) : null}
 
-              {detail.items.map((item) => (
+              {orderedItems.map((item) => (
                 <View key={item.id} style={styles.itemCard}>
                   <Text style={styles.itemName}>{item.product_name_snapshot}</Text>
                   <Text style={styles.itemMeta}>SKU: {item.sku_snapshot || 'N/A'}</Text>
                   <Text style={styles.itemMeta}>Código de barras: {item.barcode_snapshot || 'N/A'}</Text>
                   <Text style={styles.itemLabelProgress}>
-                    Etiquetas impresas: {Math.max(0, Number(mockPrintedByItem[item.id] || 0))} / {Math.max(0, Math.ceil(Number(item.qty_received || 0)))}
+                    Etiquetas impresas: {Math.max(0, Number(item.labels_printed_qty || 0))} / {Math.max(0, Math.ceil(Number(item.qty_received || 0)))}
                   </Text>
                   {editingItemId === item.id ? (
                     <>
@@ -1190,7 +1193,7 @@ export function LotDetailScreen({
                           <Text style={styles.itemActionPrintText}>
                             {printingItemId === item.id
                               ? 'Imprimiendo...'
-                              : Math.max(0, Number(mockPrintedByItem[item.id] || 0)) >= Math.max(0, Math.ceil(Number(item.qty_received || 0)))
+                              : Math.max(0, Number(item.labels_printed_qty || 0)) >= Math.max(0, Math.ceil(Number(item.qty_received || 0)))
                                 ? 'Reimprimir'
                                 : 'Imprimir'}
                           </Text>
@@ -1618,6 +1621,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#D8DFEA',
     gap: 12,
+    position: 'relative',
+    zIndex: 20,
+    elevation: 20,
   },
   headerRow: {
     flexDirection: 'row',
@@ -1798,6 +1804,18 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    color: '#0F172A',
+  },
+  searchInputField: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#B7C4D5',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 2,
+  },
+  searchInputText: {
+    paddingVertical: 8,
     color: '#0F172A',
   },
   groupSelectorButton: {

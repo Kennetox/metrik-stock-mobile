@@ -33,6 +33,7 @@ export type ReceivingLotItem = {
   qty_received: number;
   unit_cost_snapshot: number;
   unit_price_snapshot: number;
+  labels_printed_qty: number;
   is_new_product: boolean;
   notes?: string | null;
   created_at: string;

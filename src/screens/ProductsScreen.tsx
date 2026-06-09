@@ -130,6 +130,10 @@ function formatNumericText(value: string, allowDecimals: boolean): string {
   }).format(parsed);
 }
 
+function formatMoneyTyping(value: string): string {
+  return formatNumericText(value, true);
+}
+
 function normalizeText(value: string): string {
   return value
     .normalize('NFD')
@@ -1223,7 +1227,7 @@ export function ProductsScreen() {
                       <Text style={styles.fieldLabel}>Precio</Text>
                       <TextInput
                         value={form.price}
-                        onChangeText={(value) => updateForm('price', value)}
+                        onChangeText={(value) => updateForm('price', formatMoneyTyping(value))}
                         onFocus={() => updateForm('price', unformatNumericInput(form.price))}
                         onBlur={() => updateForm('price', formatNumericText(form.price, true))}
                         style={styles.fieldInput}
@@ -1234,7 +1238,7 @@ export function ProductsScreen() {
                       <Text style={styles.fieldLabel}>Costo</Text>
                       <TextInput
                         value={form.cost}
-                        onChangeText={(value) => updateForm('cost', value)}
+                        onChangeText={(value) => updateForm('cost', formatMoneyTyping(value))}
                         onFocus={() => updateForm('cost', unformatNumericInput(form.cost))}
                         onBlur={() => updateForm('cost', formatNumericText(form.cost, true))}
                         style={styles.fieldInput}

@@ -145,6 +145,17 @@ export async function deleteReceivingLotItem(
   await client.del(`/receiving/lots/${lotId}/items/${itemId}`);
 }
 
+export async function markReceivingLotItemLabelsPrinted(
+  client: ReturnTypeCreateApiClient,
+  lotId: number,
+  itemId: number,
+  copies = 1,
+): Promise<void> {
+  const params = new URLSearchParams();
+  params.set('copies', String(copies));
+  await client.post(`/receiving/lots/${lotId}/items/${itemId}/labels/mark-printed?${params.toString()}`);
+}
+
 export async function closeReceivingLot(
   client: ReturnTypeCreateApiClient,
   lotId: number,
