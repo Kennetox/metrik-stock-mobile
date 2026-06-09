@@ -8,20 +8,38 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useWindowDimensions,
+  Modal,
   View,
 } from 'react-native';
 
 import { useAppSession } from '../contexts/AppSessionContext';
+import { TableFocusSection } from '../ui/TableFocusSection';
 import {
   listInventoryProducts,
   type InventoryProductPage,
   type InventoryProductRow,
+  type InventorySortOption,
 } from '../services/api/inventory';
 
 type StockStatus = 'healthy' | 'low' | 'critical' | 'negative';
-type SortOption = 'stock_desc' | 'stock_asc' | 'name_asc' | 'sku_asc';
+type SortOption = InventorySortOption;
 type ViewMode = 'cards' | 'table';
+type SortMenuOption = {
+  value: SortOption;
+  label: string;
+};
+
+const SORT_OPTIONS: SortMenuOption[] = [
+  { value: 'name_asc', label: 'Orden alfabético' },
+  { value: 'stock_asc', label: 'Stock menor a mayor (más negativos primero)' },
+  { value: 'stock_desc', label: 'Stock mayor a menor (más altos primero)' },
+  { value: 'sku_asc', label: 'SKU menor a mayor' },
+  { value: 'sku_desc', label: 'SKU mayor a menor' },
+  { value: 'cost_stock_asc', label: 'Costo en stock menor a mayor' },
+  { value: 'cost_stock_desc', label: 'Costo en stock mayor a menor' },
+  { value: 'price_stock_asc', label: 'Precio en stock menor a mayor' },
+  { value: 'price_stock_desc', label: 'Precio en stock mayor a menor' },
+];
 
 function formatQty(value?: number | null): string {
   return new Intl.NumberFormat('es-CO', {
@@ -99,7 +117,6 @@ function statusMeta(status: StockStatus) {
 }
 
 export function StockLevelsScreen() {
-  const { width } = useWindowDimensions();
   const { apiClient, syncStatus } = useAppSession();
   const [inventoryPage, setInventoryPage] = useState<InventoryProductPage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,7 +126,9 @@ export function StockLevelsScreen() {
   const [statusFilter, setStatusFilter] = useState<'all' | StockStatus>('all');
   const [sortBy, setSortBy] = useState<SortOption>('stock_desc');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>(width >= 900 ? 'table' : 'cards');
+  const [showSortPicker, setShowSortPicker] = useState(false);
+  const [showTopPanel, setShowTopPanel] = useState(true);
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(100);
   const requestIdRef = useRef(0);
@@ -183,212 +202,198 @@ export function StockLevelsScreen() {
   const hasFilters = Boolean(search.trim()) || statusFilter !== 'all' || sortBy !== 'stock_desc';
   const isTableMode = viewMode === 'table';
 
+  useEffect(() => {
+    setShowTopPanel(true);
+  }, []);
+
   return (
     <View style={styles.container}>
-      <View style={styles.hero}>
-        <View style={styles.heroTextWrap}>
-          <Text style={styles.title}>Niveles de stock</Text>
-          <Text style={styles.subtitle}>
-            Vista rápida del inventario con colores por nivel y búsqueda directa por producto.
-          </Text>
-        </View>
-        <Pressable
-          style={[styles.refreshButton, refreshing ? styles.refreshButtonDisabled : null]}
-          onPress={() => {
-            refreshStockData().catch(() => undefined);
-          }}
-          disabled={refreshing || !canRetry}
-        >
-          {refreshing ? (
-            <ActivityIndicator size="small" color="#0F172A" />
-          ) : (
-            <Text style={styles.refreshText}>Actualizar</Text>
-          )}
-        </Pressable>
-      </View>
-
-      <View style={styles.searchRow}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Buscar por nombre, SKU, código o categoría"
-          placeholderTextColor="#94A3B8"
-          value={search}
-          onChangeText={(value) => {
-            setCurrentPage(1);
-            setSearch(value);
-          }}
-          autoCorrect={false}
-          autoCapitalize="none"
-        />
-        {hasFilters ? (
-          <Pressable
-            style={styles.clearButton}
-            onPress={() => {
-              setCurrentPage(1);
-              setSearch('');
-              setStatusFilter('all');
-              setSortBy('stock_desc');
-            }}
-          >
-            <Text style={styles.clearButtonText}>Limpiar</Text>
-          </Pressable>
-        ) : null}
-      </View>
-
-      <View style={styles.controlsBar}>
-        <View style={styles.paginationCompact}>
-          <Text style={styles.paginationText}>
-            Página {currentPage} de {totalPages} · {pageStart}-{pageEnd} de {totalProducts}
-          </Text>
-          <View style={styles.paginationButtons}>
-            <Pressable
-              style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
-              onPress={() => setCurrentPage(1)}
-              disabled={currentPage === 1}
-            >
-              <Text style={styles.paginationButtonText}>Primera</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
-              onPress={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-            >
-              <Text style={styles.paginationButtonText}>Anterior</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
-              onPress={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
-            >
-              <Text style={styles.paginationButtonText}>Siguiente</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
-              onPress={() => setCurrentPage(totalPages)}
-              disabled={currentPage === totalPages}
-            >
-              <Text style={styles.paginationButtonText}>Última</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={styles.controlsRight}>
-          <Pressable
-            style={[styles.advancedToggleButton, showAdvancedFilters ? styles.advancedToggleButtonActive : null]}
-            onPress={() => setShowAdvancedFilters((prev) => !prev)}
-          >
-            <Text
-              style={[
-                styles.advancedToggleText,
-                showAdvancedFilters ? styles.advancedToggleTextActive : null,
-              ]}
-            >
-              {showAdvancedFilters ? 'Ocultar filtros' : 'Mostrar filtros'}
+      <TableFocusSection
+        expanded={showTopPanel}
+        onChangeExpanded={setShowTopPanel}
+        expandedLabel="Desliza hacia arriba para ocultar el panel"
+        collapsedLabel="Desliza hacia abajo para mostrar el panel"
+        showLabels={!isTableMode}
+      >
+        <View style={styles.hero}>
+          <View style={styles.heroTextWrap}>
+            <Text style={styles.title}>Niveles de stock</Text>
+            <Text style={styles.subtitle}>
+              Vista rápida del inventario con colores por nivel y búsqueda directa por producto.
             </Text>
+          </View>
+          <Pressable
+            style={[styles.refreshButton, refreshing ? styles.refreshButtonDisabled : null]}
+            onPress={() => {
+              refreshStockData().catch(() => undefined);
+            }}
+            disabled={refreshing || !canRetry}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color="#0F172A" />
+            ) : (
+              <Text style={styles.refreshText}>Actualizar</Text>
+            )}
           </Pressable>
-
-          <View style={styles.modeRow}>
-            <Pressable
-              style={[styles.modeButton, !isTableMode ? styles.modeButtonActive : null]}
-              onPress={() => setViewMode('cards')}
-            >
-              <Text style={[styles.modeButtonText, !isTableMode ? styles.modeButtonTextActive : null]}>
-                Cards
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.modeButton, isTableMode ? styles.modeButtonActive : null]}
-              onPress={() => setViewMode('table')}
-            >
-              <Text style={[styles.modeButtonText, isTableMode ? styles.modeButtonTextActive : null]}>
-                Tabla
-              </Text>
-            </Pressable>
-          </View>
         </View>
-      </View>
 
-      {showAdvancedFilters ? (
-        <View style={styles.filtersCard}>
-          <View style={styles.filterRow}>
-            <FilterButton
-              label="Todos"
-              active={statusFilter === 'all'}
+        <View style={styles.searchRow}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Buscar por nombre, SKU, código o categoría"
+            placeholderTextColor="#94A3B8"
+            value={search}
+            onChangeText={(value) => {
+              setCurrentPage(1);
+              setSearch(value);
+            }}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+          {hasFilters ? (
+            <Pressable
+              style={styles.clearButton}
               onPress={() => {
                 setCurrentPage(1);
+                setSearch('');
                 setStatusFilter('all');
-              }}
-            />
-            <FilterButton
-              label="Saludable"
-              active={statusFilter === 'healthy'}
-              onPress={() => {
-                setCurrentPage(1);
-                setStatusFilter('healthy');
-              }}
-            />
-            <FilterButton
-              label="Bajo"
-              active={statusFilter === 'low'}
-              onPress={() => {
-                setCurrentPage(1);
-                setStatusFilter('low');
-              }}
-            />
-            <FilterButton
-              label="Crítico"
-              active={statusFilter === 'critical'}
-              onPress={() => {
-                setCurrentPage(1);
-                setStatusFilter('critical');
-              }}
-            />
-            <FilterButton
-              label="Negativo"
-              active={statusFilter === 'negative'}
-              onPress={() => {
-                setCurrentPage(1);
-                setStatusFilter('negative');
-              }}
-            />
-          </View>
-
-          <View style={styles.sortRow}>
-            <FilterButton
-              label="Stock desc"
-              active={sortBy === 'stock_desc'}
-              onPress={() => {
-                setCurrentPage(1);
                 setSortBy('stock_desc');
               }}
-            />
-            <FilterButton
-              label="Stock asc"
-              active={sortBy === 'stock_asc'}
-              onPress={() => {
-                setCurrentPage(1);
-                setSortBy('stock_asc');
-              }}
-            />
-            <FilterButton
-              label="Nombre"
-              active={sortBy === 'name_asc'}
-              onPress={() => {
-                setCurrentPage(1);
-                setSortBy('name_asc');
-              }}
-            />
-            <FilterButton
-              label="SKU"
-              active={sortBy === 'sku_asc'}
-              onPress={() => {
-                setCurrentPage(1);
-                setSortBy('sku_asc');
-              }}
-            />
+            >
+              <Text style={styles.clearButtonText}>Limpiar</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        <View style={styles.controlsBar}>
+          <View style={styles.paginationCompact}>
+            <Text style={styles.paginationText}>
+              Página {currentPage} de {totalPages} · {pageStart}-{pageEnd} de {totalProducts}
+            </Text>
+            <View style={styles.paginationButtons}>
+              <Pressable
+                style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+                onPress={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+              >
+                <Text style={styles.paginationButtonText}>Primera</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+                onPress={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+              >
+                <Text style={styles.paginationButtonText}>Anterior</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+                onPress={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+              >
+                <Text style={styles.paginationButtonText}>Siguiente</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+                onPress={() => setCurrentPage(totalPages)}
+                disabled={currentPage === totalPages}
+              >
+                <Text style={styles.paginationButtonText}>Última</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.controlsRight}>
+            <Pressable
+              style={[styles.advancedToggleButton, showAdvancedFilters ? styles.advancedToggleButtonActive : null]}
+              onPress={() => setShowAdvancedFilters((prev) => !prev)}
+            >
+              <Text
+                style={[
+                  styles.advancedToggleText,
+                  showAdvancedFilters ? styles.advancedToggleTextActive : null,
+                ]}
+              >
+                {showAdvancedFilters ? 'Ocultar filtros' : 'Mostrar filtros'}
+              </Text>
+            </Pressable>
+
+            <View style={styles.modeRow}>
+              <Pressable
+                style={[styles.modeButton, !isTableMode ? styles.modeButtonActive : null]}
+                onPress={() => setViewMode('cards')}
+              >
+                <Text style={[styles.modeButtonText, !isTableMode ? styles.modeButtonTextActive : null]}>
+                  Cards
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modeButton, isTableMode ? styles.modeButtonActive : null]}
+                onPress={() => setViewMode('table')}
+              >
+                <Text style={[styles.modeButtonText, isTableMode ? styles.modeButtonTextActive : null]}>
+                  Tabla
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-      ) : null}
+
+        {showAdvancedFilters ? (
+          <View style={styles.filtersCard}>
+            <View style={styles.filterRow}>
+              <FilterButton
+                label="Todos"
+                active={statusFilter === 'all'}
+                onPress={() => {
+                  setCurrentPage(1);
+                  setStatusFilter('all');
+                }}
+              />
+              <FilterButton
+                label="Saludable"
+                active={statusFilter === 'healthy'}
+                onPress={() => {
+                  setCurrentPage(1);
+                  setStatusFilter('healthy');
+                }}
+              />
+              <FilterButton
+                label="Bajo"
+                active={statusFilter === 'low'}
+                onPress={() => {
+                  setCurrentPage(1);
+                  setStatusFilter('low');
+                }}
+              />
+              <FilterButton
+                label="Crítico"
+                active={statusFilter === 'critical'}
+                onPress={() => {
+                  setCurrentPage(1);
+                  setStatusFilter('critical');
+                }}
+              />
+              <FilterButton
+                label="Negativo"
+                active={statusFilter === 'negative'}
+                onPress={() => {
+                  setCurrentPage(1);
+                  setStatusFilter('negative');
+                }}
+              />
+            </View>
+
+            <View style={styles.sortSelectRow}>
+              <Text style={styles.sortSelectLabel}>Ordenar</Text>
+              <Pressable style={styles.sortSelectButton} onPress={() => setShowSortPicker(true)}>
+                <Text style={styles.sortSelectValue}>
+                  {SORT_OPTIONS.find((option) => option.value === sortBy)?.label || 'Seleccionar orden'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+      </TableFocusSection>
 
       {isTableMode ? (
         <StockTableCard
@@ -444,6 +449,37 @@ export function StockLevelsScreen() {
           )}
         </View>
       )}
+
+      <Modal visible={showSortPicker} transparent animationType="fade" onRequestClose={() => setShowSortPicker(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.sortPickerCard}>
+            <Text style={styles.sortPickerTitle}>Ordenar inventario</Text>
+            <ScrollView style={styles.sortPickerList} contentContainerStyle={styles.sortPickerListContent}>
+              {SORT_OPTIONS.map((option) => {
+                const selected = sortBy === option.value;
+                return (
+                  <Pressable
+                    key={option.value}
+                    style={[styles.sortPickerOption, selected ? styles.sortPickerOptionSelected : null]}
+                    onPress={() => {
+                      setCurrentPage(1);
+                      setSortBy(option.value);
+                      setShowSortPicker(false);
+                    }}
+                  >
+                    <Text style={[styles.sortPickerOptionText, selected ? styles.sortPickerOptionTextSelected : null]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <Pressable style={styles.sortPickerCloseButton} onPress={() => setShowSortPicker(false)}>
+              <Text style={styles.sortPickerCloseText}>Cerrar</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -512,17 +548,6 @@ function StockTableCard({
 }) {
   return (
     <View style={styles.listCard}>
-      <View style={styles.tableHeader}>
-        <Text style={[styles.listHeaderTitle, styles.tableTitleCell]}>Producto</Text>
-        <Text style={[styles.listHeaderTitle, styles.tableSkuCell]}>SKU</Text>
-        <Text style={[styles.listHeaderTitle, styles.tableGroupCell]}>Grupo</Text>
-        <Text style={[styles.listHeaderTitle, styles.tableStockCell]}>Stock</Text>
-        <Text style={[styles.listHeaderTitle, styles.tableStateCell]}>Estado</Text>
-        <Text style={[styles.listHeaderTitle, styles.tableUnitCell]}>Costo unit.</Text>
-        <Text style={[styles.listHeaderTitle, styles.tableUnitCell]}>Precio unit.</Text>
-        <Text style={[styles.listHeaderTitle, styles.tableLastCell]}>Último mov.</Text>
-      </View>
-
       {loading ? (
         <View style={styles.stateWrap}>
           <ActivityIndicator size="large" color="#0A8F5A" />
@@ -544,6 +569,7 @@ function StockTableCard({
           style={styles.tableScroll}
           horizontal
           nestedScrollEnabled
+          contentContainerStyle={styles.tableScrollContent}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -554,15 +580,30 @@ function StockTableCard({
             />
           }
         >
-          <FlatList
-            style={styles.tableList}
-            data={filteredProducts}
-            keyExtractor={(item) => String(item.product_id)}
-            renderItem={({ item }) => <StockTableRow product={item} />}
-            ItemSeparatorComponent={RowSeparator}
-            contentContainerStyle={styles.tableBodyWrap}
-            nestedScrollEnabled
-          />
+          <View style={styles.tableInnerWrap}>
+            <View style={styles.tableHeader}>
+              <Text style={[styles.listHeaderTitle, styles.tableTitleCell]}>Producto</Text>
+              <Text style={[styles.listHeaderTitle, styles.tableSkuCell]}>SKU</Text>
+              <Text style={[styles.listHeaderTitle, styles.tableGroupCell]}>Grupo</Text>
+              <Text style={[styles.listHeaderTitle, styles.tableStockCell]}>Stock</Text>
+              <Text style={[styles.listHeaderTitle, styles.tableStateCell]}>Estado</Text>
+              <Text style={[styles.listHeaderTitle, styles.tableUnitCell]}>Costo unit.</Text>
+              <Text style={[styles.listHeaderTitle, styles.tableUnitCell]}>Precio unit.</Text>
+              <Text style={[styles.listHeaderTitle, styles.tableTotalCell]}>Costo total</Text>
+              <Text style={[styles.listHeaderTitle, styles.tableTotalCell]}>Precio total</Text>
+              <Text style={[styles.listHeaderTitle, styles.tableLastCell]}>Último mov.</Text>
+            </View>
+
+            <FlatList
+              style={styles.tableList}
+              data={filteredProducts}
+              keyExtractor={(item) => String(item.product_id)}
+              renderItem={({ item }) => <StockTableRow product={item} />}
+              ItemSeparatorComponent={RowSeparator}
+              contentContainerStyle={styles.tableBodyWrap}
+              nestedScrollEnabled
+            />
+          </View>
         </ScrollView>
       )}
     </View>
@@ -573,6 +614,8 @@ function StockTableRow({ product }: { product: InventoryProductRow }) {
   const status = resolveStockStatus(product);
   const meta = statusMeta(status);
   const qty = Number(product.qty_on_hand ?? 0);
+  const totalCost = Number(product.cost ?? 0) * qty;
+  const totalPrice = Number(product.price ?? 0) * qty;
 
   return (
     <View style={[styles.tableRow, { backgroundColor: meta.backgroundColor, borderColor: meta.borderColor }]}>
@@ -606,6 +649,16 @@ function StockTableRow({ product }: { product: InventoryProductRow }) {
       </View>
       <View style={styles.tableUnitCell}>
         <Text style={styles.tableCellText}>{formatMoney(product.price)}</Text>
+      </View>
+      <View style={styles.tableTotalCell}>
+        <Text style={[styles.tableCellText, totalCost < 0 ? styles.negativeText : null]}>
+          {formatMoney(totalCost)}
+        </Text>
+      </View>
+      <View style={styles.tableTotalCell}>
+        <Text style={[styles.tableCellText, totalPrice < 0 ? styles.negativeText : null]}>
+          {formatMoney(totalPrice)}
+        </Text>
       </View>
       <View style={styles.tableLastCell}>
         <Text style={styles.tableCellText} numberOfLines={1}>
@@ -797,10 +850,34 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
-  sortRow: {
+  sortSelectRow: {
+    gap: 6,
+  },
+  sortSelectLabel: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  sortSelectButton: {
+    minHeight: 46,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  sortSelectValue: {
+    flex: 1,
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '700',
   },
   filterButton: {
     borderRadius: 999,
@@ -934,16 +1011,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
     backgroundColor: '#F8FAFC',
-    minWidth: 1160,
+    minWidth: 1460,
   },
   tableScroll: {
     flex: 1,
   },
+  tableScrollContent: {
+    flexGrow: 1,
+  },
   tableList: {
     flex: 1,
   },
+  tableInnerWrap: {
+    minWidth: 1460,
+    flex: 1,
+  },
   tableBodyWrap: {
-    minWidth: 1160,
+    minWidth: 1460,
     padding: 12,
     gap: 8,
   },
@@ -977,12 +1061,82 @@ const styles = StyleSheet.create({
     paddingRight: 10,
   },
   tableUnitCell: {
+    width: 130,
+    paddingRight: 10,
+  },
+  tableTotalCell: {
     width: 138,
     paddingRight: 10,
   },
   tableLastCell: {
     width: 160,
     paddingRight: 10,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  sortPickerCard: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '82%',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    gap: 12,
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
+  },
+  sortPickerTitle: {
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  sortPickerList: {
+    maxHeight: 420,
+  },
+  sortPickerListContent: {
+    gap: 8,
+  },
+  sortPickerOption: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#D8DFEA',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  sortPickerOptionSelected: {
+    borderColor: '#9ED9B3',
+    backgroundColor: '#DCEFE3',
+  },
+  sortPickerOptionText: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  sortPickerOptionTextSelected: {
+    color: '#0A8F5A',
+  },
+  sortPickerCloseButton: {
+    alignSelf: 'flex-end',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  sortPickerCloseText: {
+    color: '#334155',
+    fontWeight: '800',
+    fontSize: 12,
   },
   tableProductName: {
     color: '#0F172A',

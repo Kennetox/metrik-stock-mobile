@@ -15,6 +15,7 @@ import {
 
 import { useAppSession } from '../contexts/AppSessionContext';
 import { ScreenContainer } from '../ui/ScreenContainer';
+import { TableFocusSection } from '../ui/TableFocusSection';
 import {
   createProduct,
   getProductCostSuggestion,
@@ -212,13 +213,13 @@ export function ProductsScreen() {
   const [sortBy, setSortBy] = useState<SortOption>('recent');
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [showTopPanel, setShowTopPanel] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [pickerKind, setPickerKind] = useState<PickerKind | null>(null);
   const [pickerContext, setPickerContext] = useState<PickerContext>('filter');
   const [pickerQuery, setPickerQuery] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [showDetailModal, setShowDetailModal] = useState(false);
-  const [showFormModal, setShowFormModal] = useState(false);
+  const [productModalView, setProductModalView] = useState<'detail' | 'form' | null>(null);
   const [formMode, setFormMode] = useState<FormMode>('create');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ProductFormState>(DEFAULT_FORM);
@@ -227,7 +228,7 @@ export function ProductsScreen() {
   const [duplicateCandidates, setDuplicateCandidates] = useState<ProductDuplicateCandidate[]>([]);
   const [hasHighDuplicateRisk, setHasHighDuplicateRisk] = useState(false);
   const [duplicateChecking, setDuplicateChecking] = useState(false);
-  const [costMode, setCostMode] = useState<CostMode>('balanced');
+  const costMode: CostMode = 'balanced';
   const [costSuggestion, setCostSuggestion] = useState<ProductCostSuggestionResponse | null>(null);
   const [costChecking, setCostChecking] = useState(false);
   const [nextProductCodes, setNextProductCodes] = useState<{ sku: string; barcode: string } | null>(null);
@@ -432,26 +433,29 @@ export function ProductsScreen() {
     setHasHighDuplicateRisk(false);
     setCostSuggestion(null);
     setNextProductCodes(null);
-    setShowFormModal(true);
+    setProductModalView('form');
     loadNextProductCodes(true).catch(() => undefined);
   }
 
-  function openEditModal(product: Product) {
-    if (!canMutate) {
-      setError('Sin conexión con API. Revalida la conexión para continuar.');
-      return;
-    }
-    setFormMode('edit');
-    setEditingId(product.id);
-    setForm(buildFormFromProduct(product));
-    setFormMessage(null);
-    setDuplicateCandidates([]);
-    setHasHighDuplicateRisk(false);
-    setCostSuggestion(null);
-    setNextProductCodes(null);
-    setShowDetailModal(false);
-    setShowFormModal(true);
-  }
+  const openEditModal = useCallback(
+    (product: Product) => {
+      if (!canMutate) {
+        setError('Sin conexión con API. Revalida la conexión para continuar.');
+        return;
+      }
+      setSelectedProduct(product);
+      setFormMode('edit');
+      setEditingId(product.id);
+      setForm(buildFormFromProduct(product));
+      setFormMessage(null);
+      setDuplicateCandidates([]);
+      setHasHighDuplicateRisk(false);
+      setCostSuggestion(null);
+      setNextProductCodes(null);
+      setProductModalView('form');
+    },
+    [canMutate],
+  );
 
   const checkDuplicates = useCallback(async (nextForm: ProductFormState): Promise<ProductDuplicateCandidate[]> => {
     const name = nextForm.name.trim();
@@ -566,16 +570,15 @@ export function ProductsScreen() {
         const created = await createProduct(apiClient, payload);
         setProducts((prev) => [created, ...prev]);
         setSelectedProduct(created);
-        setShowDetailModal(true);
+        setProductModalView('detail');
         setFormMessage('Producto creado correctamente.');
       } else if (editingId != null) {
         const updated = await updateProduct(apiClient, editingId, payload);
         setProducts((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
         setSelectedProduct(updated);
-        setShowDetailModal(true);
+        setProductModalView('detail');
         setFormMessage('Producto actualizado correctamente.');
       }
-      closeFormModal();
       await loadData();
     } catch (err) {
       setFormMessage(err instanceof Error ? err.message : 'No se pudo guardar el producto');
@@ -594,7 +597,13 @@ export function ProductsScreen() {
   }
 
   function closeFormModal() {
-    setShowFormModal(false);
+    setProductModalView(null);
+    setSelectedProduct(null);
+    setEditingId(null);
+    setFormMessage(null);
+    setDuplicateCandidates([]);
+    setHasHighDuplicateRisk(false);
+    setCostSuggestion(null);
     setNextProductCodes(null);
   }
 
@@ -604,7 +613,7 @@ export function ProductsScreen() {
 
   const openProductDetail = useCallback((item: Product) => {
     setSelectedProduct(item);
-    setShowDetailModal(true);
+    setProductModalView('detail');
   }, []);
 
   const renderProductCard = useCallback(
@@ -703,7 +712,11 @@ export function ProductsScreen() {
   }, [activeFilter, brandFilter, filteredProducts.length, groupFilter, query, sortBy, supplierFilter, viewMode]);
 
   useEffect(() => {
-    if (!showFormModal || formMode !== 'create') return undefined;
+    setShowTopPanel(true);
+  }, []);
+
+  useEffect(() => {
+    if (productModalView !== 'form' || formMode !== 'create') return undefined;
 
     const name = form.name.trim();
     if (name.length < 2) {
@@ -721,206 +734,214 @@ export function ProductsScreen() {
     checkDuplicates,
     form,
     formMode,
-    showFormModal,
+    productModalView,
   ]);
 
   return (
     <ScreenContainer backgroundColor="#E9EDF3" scrollEnabled={isCompactLayout}>
       <View style={styles.page}>
-        <View style={[styles.header, isCompactHeader ? styles.headerCompact : null]}>
-          <View>
-            <Text style={styles.title}>Productos</Text>
-            <Text style={styles.subtitle}>
-              Catálogo rápido para consulta, creación y edición.
-            </Text>
-          </View>
-          <View style={[styles.headerActions, isCompactHeader ? styles.headerActionsCompact : null]}>
-            <Pressable
-              style={[
-                styles.refreshButton,
-                isCompactHeader ? styles.refreshButtonCompact : null,
-                refreshing ? styles.buttonDisabled : null,
-              ]}
-              onPress={() => {
-                handleRefresh().catch(() => undefined);
-              }}
-              disabled={refreshing}
-            >
-              {refreshing ? (
-                <ActivityIndicator size="small" color="#0A8F5A" />
-              ) : (
-                <Text style={styles.refreshButtonText}>Refrescar</Text>
-              )}
-            </Pressable>
-            <Pressable
-              style={[styles.primaryButton, isCompactHeader ? styles.primaryButtonCompact : null]}
-              onPress={openCreateModal}
-            >
-              <Text style={styles.primaryButtonText}>+ Nuevo</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        {error ? (
-          <View style={styles.alertCard}>
-            <Text style={styles.alertText}>{error}</Text>
-          </View>
-        ) : null}
-
-        <View style={styles.filtersCard}>
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            style={styles.searchInput}
-            placeholder="Buscar por nombre, SKU, barra..."
-            placeholderTextColor="#64748B"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-
-          <View style={styles.controlsBar}>
-            <View style={styles.paginationCompact}>
-              <Text style={styles.paginationText}>
-                Página {currentPage} de {totalPages} · {pageStartLabel}-{pageEndLabel} de {filteredProducts.length}
+        <TableFocusSection
+          expanded={showTopPanel}
+          onChangeExpanded={setShowTopPanel}
+          expandedLabel="Desliza hacia arriba para ocultar el panel"
+          collapsedLabel="Desliza hacia abajo para mostrar el panel"
+          showLabels={!isTableMode}
+        >
+          <View style={[styles.header, isCompactHeader ? styles.headerCompact : null]}>
+            <View>
+              <Text style={styles.title}>Productos</Text>
+              <Text style={styles.subtitle}>
+                Catálogo rápido para consulta, creación y edición.
               </Text>
-              <View style={styles.paginationButtons}>
-                <Pressable
-                  style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
-                  onPress={() => setCurrentPage(1)}
-                  disabled={currentPage === 1}
-                >
-                  <Text style={styles.paginationButtonText}>Primera</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
-                  onPress={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                >
-                  <Text style={styles.paginationButtonText}>Anterior</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
-                  onPress={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                  disabled={currentPage === totalPages}
-                >
-                  <Text style={styles.paginationButtonText}>Siguiente</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
-                  onPress={() => setCurrentPage(totalPages)}
-                  disabled={currentPage === totalPages}
-                >
-                  <Text style={styles.paginationButtonText}>Última</Text>
-                </Pressable>
-              </View>
             </View>
-
-            <View style={styles.controlsRight}>
-              <View style={styles.modeRow}>
-                <Pressable
-                  style={[styles.modeChip, isTableMode ? styles.modeChipActive : null]}
-                  onPress={() => setViewMode('table')}
-                >
-                  <Text style={[styles.modeChipText, isTableMode ? styles.modeChipTextActive : null]}>Tabla</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.modeChip, !isTableMode ? styles.modeChipActive : null]}
-                  onPress={() => setViewMode('cards')}
-                >
-                  <Text style={[styles.modeChipText, !isTableMode ? styles.modeChipTextActive : null]}>Tarjetas</Text>
-                </Pressable>
-              </View>
+            <View style={[styles.headerActions, isCompactHeader ? styles.headerActionsCompact : null]}>
               <Pressable
-                style={[styles.advancedToggleButton, showAdvancedFilters ? styles.advancedToggleButtonActive : null]}
-                onPress={() => setShowAdvancedFilters((prev) => !prev)}
+                style={[
+                  styles.refreshButton,
+                  isCompactHeader ? styles.refreshButtonCompact : null,
+                  refreshing ? styles.buttonDisabled : null,
+                ]}
+                onPress={() => {
+                  handleRefresh().catch(() => undefined);
+                }}
+                disabled={refreshing}
               >
-                <Text style={[styles.advancedToggleText, showAdvancedFilters ? styles.advancedToggleTextActive : null]}>
-                  {showAdvancedFilters ? 'Ocultar filtros avanzados' : 'Mostrar filtros avanzados'}
-                </Text>
+                {refreshing ? (
+                  <ActivityIndicator size="small" color="#0A8F5A" />
+                ) : (
+                  <Text style={styles.refreshButtonText}>Refrescar</Text>
+                )}
               </Pressable>
-              {hasAdvancedFilters ? (
-                <Pressable
-                  style={styles.advancedClearButton}
-                  onPress={() => {
-                    setActiveFilter('all');
-                    setGroupFilter('');
-                    setBrandFilter('');
-                    setSupplierFilter('');
-                    setSortBy('recent');
-                  }}
-                >
-                  <Text style={styles.advancedClearText}>Limpiar</Text>
-                </Pressable>
-              ) : null}
+              <Pressable
+                style={[styles.primaryButton, isCompactHeader ? styles.primaryButtonCompact : null]}
+                onPress={openCreateModal}
+              >
+                <Text style={styles.primaryButtonText}>+ Nuevo</Text>
+              </Pressable>
             </View>
           </View>
 
-          {showAdvancedFilters ? (
-            <View style={styles.advancedPanel}>
-              <View style={styles.segmentRow}>
-                {([
-                  ['all', 'Todos'],
-                  ['active', 'Activos'],
-                  ['inactive', 'Inactivos'],
-                ] as const).map(([value, label]) => (
+          {error ? (
+            <View style={styles.alertCard}>
+              <Text style={styles.alertText}>{error}</Text>
+            </View>
+          ) : null}
+
+          <View style={styles.filtersCard}>
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              style={styles.searchInput}
+              placeholder="Buscar por nombre, SKU, barra..."
+              placeholderTextColor="#64748B"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <View style={styles.controlsBar}>
+              <View style={styles.paginationCompact}>
+                <Text style={styles.paginationText}>
+                  Página {currentPage} de {totalPages} · {pageStartLabel}-{pageEndLabel} de {filteredProducts.length}
+                </Text>
+                <View style={styles.paginationButtons}>
                   <Pressable
-                    key={value}
-                    style={[styles.segmentButton, activeFilter === value ? styles.segmentButtonActive : null]}
-                    onPress={() => setActiveFilter(value)}
+                    style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+                    onPress={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
                   >
-                    <Text style={[styles.segmentButtonText, activeFilter === value ? styles.segmentButtonTextActive : null]}>
-                      {label}
-                    </Text>
+                    <Text style={styles.paginationButtonText}>Primera</Text>
                   </Pressable>
-                ))}
+                  <Pressable
+                    style={[styles.paginationButton, currentPage === 1 ? styles.paginationButtonDisabled : null]}
+                    onPress={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    <Text style={styles.paginationButtonText}>Anterior</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+                    onPress={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                  >
+                    <Text style={styles.paginationButtonText}>Siguiente</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.paginationButton, currentPage === totalPages ? styles.paginationButtonDisabled : null]}
+                    onPress={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages}
+                  >
+                    <Text style={styles.paginationButtonText}>Última</Text>
+                  </Pressable>
+                </View>
               </View>
 
-              <View style={styles.selectGrid}>
-                <Pressable style={styles.selectField} onPress={() => openPicker('group')}>
-                  <Text style={styles.selectLabel}>Grupo</Text>
-                  <Text style={[styles.selectValue, !groupFilter.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
-                    {groupFilterLabel}
+              <View style={styles.controlsRight}>
+                <View style={styles.modeRow}>
+                  <Pressable
+                    style={[styles.modeChip, isTableMode ? styles.modeChipActive : null]}
+                    onPress={() => setViewMode('table')}
+                  >
+                    <Text style={[styles.modeChipText, isTableMode ? styles.modeChipTextActive : null]}>Tabla</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.modeChip, !isTableMode ? styles.modeChipActive : null]}
+                    onPress={() => setViewMode('cards')}
+                  >
+                    <Text style={[styles.modeChipText, !isTableMode ? styles.modeChipTextActive : null]}>Tarjetas</Text>
+                  </Pressable>
+                </View>
+                <Pressable
+                  style={[styles.advancedToggleButton, showAdvancedFilters ? styles.advancedToggleButtonActive : null]}
+                  onPress={() => setShowAdvancedFilters((prev) => !prev)}
+                >
+                  <Text style={[styles.advancedToggleText, showAdvancedFilters ? styles.advancedToggleTextActive : null]}>
+                    {showAdvancedFilters ? 'Ocultar filtros avanzados' : 'Mostrar filtros avanzados'}
                   </Text>
                 </Pressable>
-                <Pressable style={styles.selectField} onPress={() => openPicker('brand')}>
-                  <Text style={styles.selectLabel}>Marca</Text>
-                  <Text style={[styles.selectValue, !brandFilter.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
-                    {brandFilterLabel}
-                  </Text>
-                </Pressable>
-                <Pressable style={styles.selectField} onPress={() => openPicker('supplier')}>
-                  <Text style={styles.selectLabel}>Proveedor</Text>
-                  <Text style={[styles.selectValue, !supplierFilter.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
-                    {supplierFilterLabel}
-                  </Text>
-                </Pressable>
+                {hasAdvancedFilters ? (
+                  <Pressable
+                    style={styles.advancedClearButton}
+                    onPress={() => {
+                      setActiveFilter('all');
+                      setGroupFilter('');
+                      setBrandFilter('');
+                      setSupplierFilter('');
+                      setSortBy('recent');
+                    }}
+                  >
+                    <Text style={styles.advancedClearText}>Limpiar</Text>
+                  </Pressable>
+                ) : null}
               </View>
+            </View>
 
-              <View style={styles.sortRow}>
-                <Text style={styles.sortLabel}>Ordenar:</Text>
-                <View style={styles.sortChips}>
+            {showAdvancedFilters ? (
+              <View style={styles.advancedPanel}>
+                <View style={styles.segmentRow}>
                   {([
-                    ['recent', 'Recientes'],
-                    ['name', 'Nombre'],
-                    ['sku', 'SKU'],
-                    ['price_asc', 'Precio +'],
-                    ['price_desc', 'Precio -'],
+                    ['all', 'Todos'],
+                    ['active', 'Activos'],
+                    ['inactive', 'Inactivos'],
                   ] as const).map(([value, label]) => (
                     <Pressable
                       key={value}
-                      style={[styles.sortChip, sortBy === value ? styles.sortChipActive : null]}
-                      onPress={() => setSortBy(value)}
+                      style={[styles.segmentButton, activeFilter === value ? styles.segmentButtonActive : null]}
+                      onPress={() => setActiveFilter(value)}
                     >
-                      <Text style={[styles.sortChipText, sortBy === value ? styles.sortChipTextActive : null]}>
+                      <Text style={[styles.segmentButtonText, activeFilter === value ? styles.segmentButtonTextActive : null]}>
                         {label}
                       </Text>
                     </Pressable>
                   ))}
                 </View>
+
+                <View style={styles.selectGrid}>
+                  <Pressable style={styles.selectField} onPress={() => openPicker('group')}>
+                    <Text style={styles.selectLabel}>Grupo</Text>
+                    <Text style={[styles.selectValue, !groupFilter.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
+                      {groupFilterLabel}
+                    </Text>
+                  </Pressable>
+                  <Pressable style={styles.selectField} onPress={() => openPicker('brand')}>
+                    <Text style={styles.selectLabel}>Marca</Text>
+                    <Text style={[styles.selectValue, !brandFilter.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
+                      {brandFilterLabel}
+                    </Text>
+                  </Pressable>
+                  <Pressable style={styles.selectField} onPress={() => openPicker('supplier')}>
+                    <Text style={styles.selectLabel}>Proveedor</Text>
+                    <Text style={[styles.selectValue, !supplierFilter.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
+                      {supplierFilterLabel}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.sortRow}>
+                  <Text style={styles.sortLabel}>Ordenar:</Text>
+                  <View style={styles.sortChips}>
+                    {([
+                      ['recent', 'Recientes'],
+                      ['name', 'Nombre'],
+                      ['sku', 'SKU'],
+                      ['price_asc', 'Precio +'],
+                      ['price_desc', 'Precio -'],
+                    ] as const).map(([value, label]) => (
+                      <Pressable
+                        key={value}
+                        style={[styles.sortChip, sortBy === value ? styles.sortChipActive : null]}
+                        onPress={() => setSortBy(value)}
+                      >
+                        <Text style={[styles.sortChipText, sortBy === value ? styles.sortChipTextActive : null]}>
+                          {label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
               </View>
-            </View>
-          ) : null}
-        </View>
+            ) : null}
+          </View>
+        </TableFocusSection>
 
         {isTableMode ? (
           <View style={styles.tablePanel}>
@@ -1092,315 +1113,236 @@ export function ProductsScreen() {
         </View>
       </Modal>
 
-      <Modal visible={showDetailModal} transparent animationType="fade" onRequestClose={() => setShowDetailModal(false)}>
+      <Modal
+        visible={productModalView !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={closeFormModal}
+      >
         <View style={styles.modalBackdrop}>
-          <View style={styles.detailModalCard}>
-            <ScrollView
-              style={styles.detailModalScroll}
-              contentContainerStyle={styles.detailModalScrollContent}
-              showsVerticalScrollIndicator={false}
-            >
-              <Text style={styles.modalTitle}>{selectedProduct?.name || 'Producto'}</Text>
-              <Text style={styles.modalSubtitle}>{selectedProduct?.sku || 'Sin SKU'}</Text>
-
-              {selectedProduct ? (
-                <View style={styles.detailGrid}>
-                  <DetailLine label="Precio" value={`$${formatMoney(selectedProduct.price)}`} />
-                  <DetailLine label="Costo" value={`$${formatMoney(selectedProduct.cost)}`} />
-                  <DetailLine label="Barras" value={selectedProduct.barcode || '—'} />
-                  <DetailLine label="Grupo" value={displayGroup(selectedProduct)} />
-                  <DetailLine label="Marca" value={selectedProduct.brand || '—'} />
-                  <DetailLine label="Proveedor" value={selectedProduct.supplier || '—'} />
-                  <DetailLine label="Unidad" value={selectedProduct.unit || '—'} />
-                  <DetailLine label="Formato" value={selectedProduct.label_format || '—'} />
-                  <DetailLine label="Stock mín." value={formatIntegerInput(selectedProduct.stock_min)} />
-                  <DetailLine label="Preferida" value={formatIntegerInput(selectedProduct.preferred_qty)} />
-                  <DetailLine label="Reorden" value={formatIntegerInput(selectedProduct.reorder_point)} />
-                  <DetailLine label="Existencia" value={formatIntegerInput(selectedProduct.qty_on_hand) || '—'} />
-                  <DetailLine label="Estado" value={selectedProduct.active ? 'Activo' : 'Inactivo'} />
-                </View>
-              ) : null}
-
-            </ScrollView>
-
-            <View style={styles.detailActionsBar}>
-              <Pressable style={styles.secondaryButton} onPress={() => setShowDetailModal(false)}>
-                <Text style={styles.secondaryButtonText}>Cerrar</Text>
-              </Pressable>
-              <Pressable
-                style={styles.secondaryButton}
-                onPress={() => {
-                  if (selectedProduct) openEditModal(selectedProduct);
-                }}
+          {productModalView === 'detail' ? (
+            <View style={styles.detailModalCard}>
+              <ScrollView
+                style={styles.detailModalScroll}
+                contentContainerStyle={styles.detailModalScrollContent}
+                showsVerticalScrollIndicator={false}
               >
-                <Text style={styles.secondaryButtonText}>Editar</Text>
-              </Pressable>
+                <Text style={styles.modalTitle}>{selectedProduct?.name || 'Producto'}</Text>
+                <Text style={styles.modalSubtitle}>{selectedProduct?.sku || 'Sin SKU'}</Text>
+
+                {selectedProduct ? (
+                  <View style={styles.detailGrid}>
+                    <DetailLine label="Precio" value={`$${formatMoney(selectedProduct.price)}`} />
+                    <DetailLine label="Costo" value={`$${formatMoney(selectedProduct.cost)}`} />
+                    <DetailLine label="Barras" value={selectedProduct.barcode || '—'} />
+                    <DetailLine label="Grupo" value={displayGroup(selectedProduct)} />
+                    <DetailLine label="Marca" value={selectedProduct.brand || '—'} />
+                    <DetailLine label="Proveedor" value={selectedProduct.supplier || '—'} />
+                    <DetailLine label="Unidad" value={selectedProduct.unit || '—'} />
+                    <DetailLine label="Formato" value={selectedProduct.label_format || '—'} />
+                    <DetailLine label="Stock mín." value={formatIntegerInput(selectedProduct.stock_min)} />
+                    <DetailLine label="Preferida" value={formatIntegerInput(selectedProduct.preferred_qty)} />
+                    <DetailLine label="Reorden" value={formatIntegerInput(selectedProduct.reorder_point)} />
+                    <DetailLine label="Existencia" value={formatIntegerInput(selectedProduct.qty_on_hand) || '—'} />
+                    <DetailLine label="Estado" value={selectedProduct.active ? 'Activo' : 'Inactivo'} />
+                  </View>
+                ) : null}
+              </ScrollView>
+
+              <View style={styles.detailActionsBar}>
+                <Pressable style={styles.secondaryButton} onPress={closeFormModal}>
+                  <Text style={styles.secondaryButtonText}>Cerrar</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.secondaryButton}
+                  onPress={() => {
+                    if (!selectedProduct) return;
+                    openEditModal(selectedProduct);
+                  }}
+                >
+                  <Text style={styles.secondaryButtonText}>Editar</Text>
+                </Pressable>
+              </View>
             </View>
-          </View>
-        </View>
-      </Modal>
+          ) : null}
 
-      <Modal visible={showFormModal} transparent animationType="fade" onRequestClose={closeFormModal}>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.formModalCard, isCompactLayout ? styles.formModalCardCompact : null]}>
-            <ScrollView
-              style={styles.formModalScroll}
-              contentContainerStyle={styles.formModalScrollContent}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-            >
-              <View style={styles.formModalBody}>
-                <Text style={styles.modalTitle}>{formMode === 'create' ? 'Nuevo producto' : 'Editar producto'}</Text>
-                <Text style={styles.modalSubtitle}>
-                  {formMode === 'create'
-                    ? 'Usa campos cortos y esenciales. El resto se puede ajustar luego.'
-                    : 'Modifica solo lo operativo para mantener el flujo rápido.'}
-                </Text>
+          {productModalView === 'form' ? (
+            <View style={[styles.formModalCard, isCompactLayout ? styles.formModalCardCompact : null]}>
+              <ScrollView
+                style={styles.formModalScroll}
+                contentContainerStyle={styles.formModalScrollContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                <View style={styles.formModalBody}>
+                  <Text style={styles.modalTitle}>{formMode === 'create' ? 'Nuevo producto' : 'Editar producto'}</Text>
+                  <Text style={styles.modalSubtitle}>
+                    {formMode === 'create'
+                      ? 'Usa campos cortos y esenciales. El resto se puede ajustar luego.'
+                      : 'Modifica solo lo operativo para mantener el flujo rápido.'}
+                  </Text>
 
-                {formMessage ? <Text style={styles.inlineMessage}>{formMessage}</Text> : null}
+                  {formMessage ? <Text style={styles.inlineMessage}>{formMessage}</Text> : null}
 
-                <Text style={styles.fieldLabel}>Nombre</Text>
-                <TextInput value={form.name} onChangeText={(value) => updateForm('name', value)} style={styles.fieldInput} />
+                  <Text style={styles.fieldLabel}>Nombre</Text>
+                  <TextInput value={form.name} onChangeText={(value) => updateForm('name', value)} style={styles.fieldInput} />
 
-                <View style={styles.twoColGrid}>
-                  <View style={styles.colItem}>
-                    <Text style={styles.fieldLabel}>SKU</Text>
-                    <View style={styles.fieldDisplay}>
-                      <Text style={[styles.fieldDisplayValue, !form.sku.trim() ? styles.fieldDisplayMuted : null]}>
-                        {form.sku.trim() ||
-                          nextProductCodes?.sku ||
-                          (loadingNextProductCodes && formMode === 'create' ? 'Generando...' : 'Sin SKU')}
-                      </Text>
+                  <View style={styles.twoColGrid}>
+                    <View style={styles.colItem}>
+                      <Text style={styles.fieldLabel}>SKU</Text>
+                      <View style={styles.fieldDisplay}>
+                        <Text style={[styles.fieldDisplayValue, !form.sku.trim() ? styles.fieldDisplayMuted : null]}>
+                          {form.sku.trim() ||
+                            nextProductCodes?.sku ||
+                            (loadingNextProductCodes && formMode === 'create' ? 'Generando...' : 'Sin SKU')}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.colItem}>
+                      <Text style={styles.fieldLabel}>Código de barras</Text>
+                      <View style={styles.fieldDisplay}>
+                        <Text style={[styles.fieldDisplayValue, !form.barcode.trim() ? styles.fieldDisplayMuted : null]}>
+                          {form.barcode.trim() ||
+                            nextProductCodes?.barcode ||
+                            (loadingNextProductCodes && formMode === 'create' ? 'Generando...' : 'Sin código')}
+                        </Text>
+                      </View>
                     </View>
                   </View>
-                  <View style={styles.colItem}>
-                    <Text style={styles.fieldLabel}>Código de barras</Text>
-                    <View style={styles.fieldDisplay}>
-                      <Text style={[styles.fieldDisplayValue, !form.barcode.trim() ? styles.fieldDisplayMuted : null]}>
-                        {form.barcode.trim() ||
-                          nextProductCodes?.barcode ||
-                          (loadingNextProductCodes && formMode === 'create' ? 'Generando...' : 'Sin código')}
-                      </Text>
+
+                  <View style={styles.twoColGrid}>
+                    <View style={styles.colItem}>
+                      <Text style={styles.fieldLabel}>Precio</Text>
+                      <TextInput
+                        value={form.price}
+                        onChangeText={(value) => updateForm('price', value)}
+                        onFocus={() => updateForm('price', unformatNumericInput(form.price))}
+                        onBlur={() => updateForm('price', formatNumericText(form.price, true))}
+                        style={styles.fieldInput}
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+                    <View style={styles.colItem}>
+                      <Text style={styles.fieldLabel}>Costo</Text>
+                      <TextInput
+                        value={form.cost}
+                        onChangeText={(value) => updateForm('cost', value)}
+                        onFocus={() => updateForm('cost', unformatNumericInput(form.cost))}
+                        onBlur={() => updateForm('cost', formatNumericText(form.cost, true))}
+                        style={styles.fieldInput}
+                        keyboardType="decimal-pad"
+                      />
                     </View>
                   </View>
-                </View>
 
-                <View style={styles.twoColGrid}>
-                  <View style={styles.colItem}>
-                    <Text style={styles.fieldLabel}>Precio</Text>
-                    <TextInput
-                      value={form.price}
-                      onChangeText={(value) => updateForm('price', value)}
-                      onFocus={() => updateForm('price', unformatNumericInput(form.price))}
-                      onBlur={() => updateForm('price', formatNumericText(form.price, true))}
-                      style={styles.fieldInput}
-                      keyboardType="decimal-pad"
-                    />
-                  </View>
-                  <View style={styles.colItem}>
-                    <Text style={styles.fieldLabel}>Costo</Text>
-                    <TextInput
-                      value={form.cost}
-                      onChangeText={(value) => updateForm('cost', value)}
-                      onFocus={() => updateForm('cost', unformatNumericInput(form.cost))}
-                      onBlur={() => updateForm('cost', formatNumericText(form.cost, true))}
-                      style={styles.fieldInput}
-                      keyboardType="decimal-pad"
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.actionRow}>
-                  {formMode === 'create' ? (
+                  <View style={styles.actionRow}>
+                    {formMode === 'create' ? (
+                      <Pressable
+                        style={[styles.secondaryButton, styles.flexButton]}
+                        onPress={() => checkDuplicates(form).catch(() => undefined)}
+                        disabled={duplicateChecking}
+                      >
+                        {duplicateChecking ? (
+                          <ActivityIndicator size="small" color="#0A8F5A" />
+                        ) : (
+                          <Text style={styles.secondaryButtonText}>Buscar duplicados</Text>
+                        )}
+                      </Pressable>
+                    ) : null}
                     <Pressable
                       style={[styles.secondaryButton, styles.flexButton]}
-                      onPress={() => checkDuplicates(form).catch(() => undefined)}
-                      disabled={duplicateChecking}
+                      onPress={() => suggestCost(form).catch(() => undefined)}
+                      disabled={costChecking}
                     >
-                      {duplicateChecking ? (
+                      {costChecking ? (
                         <ActivityIndicator size="small" color="#0A8F5A" />
                       ) : (
-                        <Text style={styles.secondaryButtonText}>Buscar duplicados</Text>
+                        <Text style={styles.secondaryButtonText}>Sugerir costo</Text>
                       )}
                     </Pressable>
+                  </View>
+
+                  {formMode === 'create' && duplicateCandidates.length > 0 ? (
+                    <View style={styles.alertCard}>
+                      <Text style={styles.alertTitle}>
+                        {hasHighDuplicateRisk ? 'Posible duplicado de riesgo alto' : 'Posibles duplicados'}
+                      </Text>
+                      {duplicateCandidates.slice(0, 3).map((candidate) => (
+                        <View key={candidate.product_id} style={styles.duplicateRow}>
+                          <Text style={styles.duplicateName}>{candidate.name}</Text>
+                          <Text style={styles.duplicateMeta}>
+                            {candidate.sku ? `SKU ${candidate.sku}` : 'Sin SKU'} · {Math.round(candidate.similarity_score * 100)}%
+                          </Text>
+                          {candidate.match_reasons.length > 0 ? (
+                            <Text style={styles.duplicateReasons}>{candidate.match_reasons.slice(0, 2).join(' · ')}</Text>
+                          ) : null}
+                        </View>
+                      ))}
+                    </View>
                   ) : null}
-                  <Pressable
-                    style={[styles.secondaryButton, styles.flexButton]}
-                    onPress={() => suggestCost(form).catch(() => undefined)}
-                    disabled={costChecking}
-                  >
-                    {costChecking ? (
-                      <ActivityIndicator size="small" color="#0A8F5A" />
-                    ) : (
-                      <Text style={styles.secondaryButtonText}>Sugerir costo</Text>
-                    )}
+
+                  {costSuggestion ? (
+                    <View style={styles.costCard}>
+                      <Text style={styles.alertTitle}>Costo sugerido</Text>
+                      <Text style={styles.costValue}>${formatMoney(costSuggestion.suggested_cost)}</Text>
+                      <Text style={styles.costMeta}>
+                        Confianza {costSuggestion.confidence_label} · {Math.round(costSuggestion.confidence_score * 100)}%
+                      </Text>
+                      <Text style={styles.costMeta}>
+                        Rango ${formatMoney(costSuggestion.range_min_cost)} - ${formatMoney(costSuggestion.range_max_cost)}
+                      </Text>
+                      <Text style={styles.costMeta}>
+                        Modo {costSuggestion.mode_label || costSuggestion.mode}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  <Pressable style={styles.selectField} onPress={() => openPicker('group', 'form')}>
+                    <Text style={styles.selectLabel}>Grupo</Text>
+                    <Text style={[styles.selectValue, !form.group_name.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
+                      {formGroupLabel}
+                    </Text>
                   </Pressable>
+
+                  <View style={styles.twoColGrid}>
+                    <Pressable style={[styles.selectField, styles.colItem]} onPress={() => openPicker('brand', 'form')}>
+                      <Text style={styles.selectLabel}>Marca</Text>
+                      <Text style={[styles.selectValue, !form.brand.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
+                        {formBrandLabel}
+                      </Text>
+                    </Pressable>
+                    <Pressable style={[styles.selectField, styles.colItem]} onPress={() => openPicker('supplier', 'form')}>
+                      <Text style={styles.selectLabel}>Proveedor</Text>
+                      <Text style={[styles.selectValue, !form.supplier.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
+                        {formSupplierLabel}
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  <Text style={styles.fieldLabel}>Unidad</Text>
+                  <TextInput value={form.unit} onChangeText={(value) => updateForm('unit', value)} style={styles.fieldInput} />
                 </View>
-
-                {formMode === 'create' && duplicateCandidates.length > 0 ? (
-                  <View style={styles.alertCard}>
-                    <Text style={styles.alertTitle}>
-                      {hasHighDuplicateRisk ? 'Posible duplicado de riesgo alto' : 'Posibles duplicados'}
-                    </Text>
-                    {duplicateCandidates.slice(0, 3).map((candidate) => (
-                      <View key={candidate.product_id} style={styles.duplicateRow}>
-                        <Text style={styles.duplicateName}>{candidate.name}</Text>
-                        <Text style={styles.duplicateMeta}>
-                          {candidate.sku ? `SKU ${candidate.sku}` : 'Sin SKU'} · {Math.round(candidate.similarity_score * 100)}%
-                        </Text>
-                        {candidate.match_reasons.length > 0 ? (
-                          <Text style={styles.duplicateReasons}>{candidate.match_reasons.slice(0, 2).join(' · ')}</Text>
-                        ) : null}
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-
-                {costSuggestion ? (
-                  <View style={styles.costCard}>
-                    <Text style={styles.alertTitle}>Costo sugerido</Text>
-                    <Text style={styles.costValue}>${formatMoney(costSuggestion.suggested_cost)}</Text>
-                    <Text style={styles.costMeta}>
-                      Confianza {costSuggestion.confidence_label} · {Math.round(costSuggestion.confidence_score * 100)}%
-                    </Text>
-                    <Text style={styles.costMeta}>
-                      Rango ${formatMoney(costSuggestion.range_min_cost)} - ${formatMoney(costSuggestion.range_max_cost)}
-                    </Text>
-                    <Text style={styles.costMeta}>
-                      Modo {costSuggestion.mode_label || costSuggestion.mode}
-                    </Text>
-                  </View>
-                ) : null}
-
-                <Pressable style={styles.selectField} onPress={() => openPicker('group', 'form')}>
-                  <Text style={styles.selectLabel}>Grupo</Text>
-                  <Text style={[styles.selectValue, !form.group_name.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
-                    {formGroupLabel}
-                  </Text>
+              </ScrollView>
+              <View style={styles.formActionsBar}>
+                <Pressable style={styles.secondaryButton} onPress={closeFormModal}>
+                  <Text style={styles.secondaryButtonText}>Cancelar</Text>
                 </Pressable>
-
-                <View style={styles.twoColGrid}>
-                  <Pressable style={[styles.selectField, styles.colItem]} onPress={() => openPicker('brand', 'form')}>
-                    <Text style={styles.selectLabel}>Marca</Text>
-                    <Text style={[styles.selectValue, !form.brand.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
-                      {formBrandLabel}
-                    </Text>
-                  </Pressable>
-                  <Pressable style={[styles.selectField, styles.colItem]} onPress={() => openPicker('supplier', 'form')}>
-                    <Text style={styles.selectLabel}>Proveedor</Text>
-                    <Text style={[styles.selectValue, !form.supplier.trim() ? styles.selectPlaceholder : null]} numberOfLines={1}>
-                      {formSupplierLabel}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                <Text style={styles.fieldLabel}>Unidad</Text>
-                <TextInput value={form.unit} onChangeText={(value) => updateForm('unit', value)} style={styles.fieldInput} />
-
-                <Text style={styles.fieldLabel}>Formato de etiqueta</Text>
-                <View style={styles.segmentRow}>
-                  {(['Kensar1', 'Cables_1'] as const).map((value) => (
-                    <Pressable
-                      key={value}
-                      style={[styles.segmentButton, form.label_format === value ? styles.segmentButtonActive : null]}
-                      onPress={() => updateForm('label_format', value)}
-                    >
-                      <Text style={[styles.segmentButtonText, form.label_format === value ? styles.segmentButtonTextActive : null]}>
-                        {value}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-
-                <View style={styles.twoColGrid}>
-                  <View style={styles.colItem}>
-                    <Text style={styles.fieldLabel}>Stock mínimo</Text>
-                    <TextInput
-                      value={form.stock_min}
-                      onChangeText={(value) => updateForm('stock_min', value)}
-                      onFocus={() => updateForm('stock_min', unformatNumericInput(form.stock_min))}
-                      onBlur={() => updateForm('stock_min', formatNumericText(form.stock_min, false) || '0')}
-                      style={styles.fieldInput}
-                      keyboardType="number-pad"
-                    />
-                  </View>
-                  <View style={styles.colItem}>
-                    <Text style={styles.fieldLabel}>Cantidad preferida</Text>
-                    <TextInput
-                      value={form.preferred_qty}
-                      onChangeText={(value) => updateForm('preferred_qty', value)}
-                      onFocus={() => updateForm('preferred_qty', unformatNumericInput(form.preferred_qty))}
-                      onBlur={() => updateForm('preferred_qty', formatNumericText(form.preferred_qty, false) || '0')}
-                      style={styles.fieldInput}
-                      keyboardType="number-pad"
-                    />
-                  </View>
-                </View>
-
-                <Text style={styles.fieldLabel}>Punto de reorden</Text>
-                <TextInput
-                  value={form.reorder_point}
-                  onChangeText={(value) => updateForm('reorder_point', value)}
-                  onFocus={() => updateForm('reorder_point', unformatNumericInput(form.reorder_point))}
-                  onBlur={() => updateForm('reorder_point', formatNumericText(form.reorder_point, false) || '0')}
-                  style={styles.fieldInput}
-                  keyboardType="number-pad"
-                />
-
-                <View style={styles.segmentRow}>
-                  <ToggleChip label="Activo" value={form.active} onPress={() => updateForm('active', !form.active)} />
-                  <ToggleChip label="Servicio" value={form.service} onPress={() => updateForm('service', !form.service)} />
-                  <ToggleChip label="IVA" value={form.includes_tax} onPress={() => updateForm('includes_tax', !form.includes_tax)} />
-                  <ToggleChip
-                    label="Permitir cambio"
-                    value={form.allow_price_change}
-                    onPress={() => updateForm('allow_price_change', !form.allow_price_change)}
-                  />
-                  <ToggleChip
-                    label="Alertar stock"
-                    value={form.low_stock_alert}
-                    onPress={() => updateForm('low_stock_alert', !form.low_stock_alert)}
-                  />
-                </View>
-
-                <View style={styles.segmentRow}>
-                  {([
-                    ['balanced', 'Balanceado'],
-                    ['conservative', 'Conservador'],
-                    ['aggressive', 'Agresivo'],
-                  ] as const).map(([value, label]) => (
-                    <Pressable
-                      key={value}
-                      style={[styles.segmentButton, costMode === value ? styles.segmentButtonActive : null]}
-                      onPress={() => setCostMode(value)}
-                    >
-                      <Text style={[styles.segmentButtonText, costMode === value ? styles.segmentButtonTextActive : null]}>
-                        {label}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
+                <Pressable
+                  style={styles.primaryButton}
+                  onPress={() => submitForm().catch(() => undefined)}
+                  disabled={saving || (formMode === 'create' && loadingNextProductCodes)}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : formMode === 'create' && loadingNextProductCodes ? (
+                    <Text style={styles.primaryButtonText}>Generando...</Text>
+                  ) : (
+                    <Text style={styles.primaryButtonText}>{formMode === 'create' ? 'Crear' : 'Guardar'}</Text>
+                  )}
+                </Pressable>
               </View>
-            </ScrollView>
-            <View style={styles.formActionsBar}>
-              <Pressable style={styles.secondaryButton} onPress={closeFormModal}>
-                <Text style={styles.secondaryButtonText}>Cancelar</Text>
-              </Pressable>
-              <Pressable
-                style={styles.primaryButton}
-                onPress={() => submitForm().catch(() => undefined)}
-                disabled={saving || (formMode === 'create' && loadingNextProductCodes)}
-              >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : formMode === 'create' && loadingNextProductCodes ? (
-                  <Text style={styles.primaryButtonText}>Generando...</Text>
-                ) : (
-                  <Text style={styles.primaryButtonText}>{formMode === 'create' ? 'Crear' : 'Guardar'}</Text>
-                )}
-              </Pressable>
             </View>
-          </View>
+          ) : null}
         </View>
       </Modal>
     </ScreenContainer>
@@ -1416,26 +1358,11 @@ function DetailLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ToggleChip({
-  label,
-  value,
-  onPress,
-}: {
-  label: string;
-  value: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable style={[styles.toggleChip, value ? styles.toggleChipActive : null]} onPress={onPress}>
-      <Text style={[styles.toggleChipText, value ? styles.toggleChipTextActive : null]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   page: {
     flex: 1,
     gap: 10,
+    position: 'relative',
   },
   list: {
     flex: 1,
@@ -2233,26 +2160,6 @@ const styles = StyleSheet.create({
     color: '#0A8F5A',
     fontSize: 12,
     fontWeight: '700',
-  },
-  toggleChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#B7C4D5',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  toggleChipActive: {
-    backgroundColor: '#DCEFE3',
-    borderColor: '#9ED9B3',
-  },
-  toggleChipText: {
-    color: '#334155',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  toggleChipTextActive: {
-    color: '#0A8F5A',
   },
   duplicateRow: {
     paddingVertical: 6,

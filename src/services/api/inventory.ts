@@ -22,6 +22,17 @@ export type InventoryProductPage = {
   total_price_value: number;
 };
 
+export type InventorySortOption =
+  | 'name_asc'
+  | 'stock_asc'
+  | 'stock_desc'
+  | 'sku_asc'
+  | 'sku_desc'
+  | 'cost_stock_asc'
+  | 'cost_stock_desc'
+  | 'price_stock_asc'
+  | 'price_stock_desc';
+
 export async function listInventoryProducts(
   client: ReturnTypeCreateApiClient,
   options?: {
@@ -31,16 +42,7 @@ export async function listInventoryProducts(
     group?: string;
     stock?: 'all' | 'positive' | 'zero' | 'negative';
     status?: 'all' | 'ok' | 'low' | 'critical' | 'negative';
-    sort?:
-      | 'name_asc'
-      | 'stock_asc'
-      | 'stock_desc'
-      | 'sku_asc'
-      | 'sku_desc'
-      | 'cost_stock_asc'
-      | 'cost_stock_desc'
-      | 'price_stock_asc'
-      | 'price_stock_desc';
+    sort?: InventorySortOption;
   },
 ): Promise<InventoryProductPage> {
   const params = new URLSearchParams();
