@@ -111,6 +111,25 @@ export async function searchReceivingProductsAll(
   return rows;
 }
 
+export function isReceivingProductActive(
+  product: {
+    active?: boolean | null;
+    is_active?: boolean | null;
+  } | null | undefined,
+): boolean {
+  if (!product) return false;
+  if (typeof product.active === 'boolean') return product.active;
+  if (typeof product.is_active === 'boolean') return product.is_active;
+  return true;
+}
+
+export function filterActiveReceivingProducts<T extends {
+  active?: boolean | null;
+  is_active?: boolean | null;
+}>(items: T[]): T[] {
+  return items.filter((item) => isReceivingProductActive(item));
+}
+
 export async function addReceivingLotItem(
   client: ReturnTypeCreateApiClient,
   lotId: number,

@@ -25,7 +25,12 @@ import {
   listRecounts,
   upsertRecountLine,
 } from '../services/api/recounts';
-import { listReceivingProductGroups, resolveReceivingProductByBarcode, searchReceivingProducts } from '../services/api/receiving';
+import {
+  filterActiveReceivingProducts,
+  listReceivingProductGroups,
+  resolveReceivingProductByBarcode,
+  searchReceivingProducts,
+} from '../services/api/receiving';
 import type { RecountDetail, RecountLine, RecountRecord, RecountStatus } from '../types/recounts';
 import { ScreenContainer } from '../ui/ScreenContainer';
 
@@ -173,6 +178,10 @@ export function RecountsScreen({
   const prevCountedLinesRef = useRef(0);
   const autoFollowRef = useRef(true);
   const autoScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const docsRefreshInFlightRef = useRef(false);
+  const detailRefreshInFlightRef = useRef(false);
+  const lastDocsRefreshAtRef = useRef(0);
+  const lastDetailRefreshAtRef = useRef(0);
   const cameraDevice = useCameraDevice('back');
   const { hasPermission: hasCameraPermission, requestPermission: requestCameraPermission } = useCameraPermission();
 
@@ -184,6 +193,13 @@ export function RecountsScreen({
 
   const loadDocs = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
+    if (docsRefreshInFlightRef.current) {
+      return;
+    }
+    if (silent && Date.now() - lastDocsRefreshAtRef.current < 20000) {
+      return;
+    }
+    docsRefreshInFlightRef.current = true;
     if (!silent) {
       setError(null);
       setLoadingDocs(true);
@@ -206,6 +222,8 @@ export function RecountsScreen({
       if (!silent) {
         setLoadingDocs(false);
       }
+      lastDocsRefreshAtRef.current = Date.now();
+      docsRefreshInFlightRef.current = false;
     }
   }, [apiClient, stockDeviceId]);
 
@@ -215,6 +233,13 @@ export function RecountsScreen({
       setDetail(null);
       return;
     }
+    if (detailRefreshInFlightRef.current) {
+      return;
+    }
+    if (silent && Date.now() - lastDetailRefreshAtRef.current < 20000) {
+      return;
+    }
+    detailRefreshInFlightRef.current = true;
     if (!silent) {
       setLoadingDetail(true);
       setError(null);
@@ -244,6 +269,8 @@ export function RecountsScreen({
       if (!silent) {
         setLoadingDetail(false);
       }
+      lastDetailRefreshAtRef.current = Date.now();
+      detailRefreshInFlightRef.current = false;
     }
   }, [apiClient, selectedId]);
 
@@ -257,7 +284,7 @@ export function RecountsScreen({
       if (workspaceOpen) {
         loadDetail({ silent: true }).catch(() => undefined);
       }
-    }, 12000);
+    }, 30000);
     return () => clearInterval(timer);
   }, [loadDocs, loadDetail, workspaceOpen]);
 
@@ -337,13 +364,14 @@ export function RecountsScreen({
       const requestPromise =
         scopeType === 'free'
           ? searchReceivingProducts(apiClient, term, 25).then((products) => {
+              const activeProducts = filterActiveReceivingProducts(products);
               const countedByProductId = new Map<number, number>();
               (detail?.lines ?? []).forEach((line) => {
                 if (line.counted_qty != null) {
                   countedByProductId.set(line.product_id, Number(line.counted_qty));
                 }
               });
-              return products.map<ManualResultRow>((product) => ({
+              return activeProducts.map<ManualResultRow>((product) => ({
                 id: product.id,
                 product_id: product.id,
                 product_name: product.name,
@@ -453,7 +481,7 @@ export function RecountsScreen({
         setLineDraft((prev) => ({ ...prev, [picked.id]: String(nextCount) }));
       }
       await loadDetail();
-      await loadDocs();
+      loadDocs({ silent: true }).catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo procesar el escaneo');
     }

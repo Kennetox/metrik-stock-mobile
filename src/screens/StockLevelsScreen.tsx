@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -21,6 +21,7 @@ import {
   type InventoryProductRow,
   type InventorySortOption,
 } from '../services/api/inventory';
+import { listProductGroups, type ProductGroup } from '../services/api/products';
 
 type StockStatus = 'healthy' | 'low' | 'critical' | 'negative';
 type SortOption = InventorySortOption;
@@ -47,6 +48,16 @@ const SORT_OPTIONS: SortMenuOption[] = [
   { value: 'price_stock_asc', label: 'Precio en stock menor a mayor' },
   { value: 'price_stock_desc', label: 'Precio en stock mayor a menor' },
 ];
+
+function normalizeFilterText(value: string): string {
+  return (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function formatQty(value?: number | null): string {
   return new Intl.NumberFormat('es-CO', {
@@ -127,14 +138,18 @@ export function StockLevelsScreen() {
   const { width, height } = useWindowDimensions();
   const { apiClient, syncStatus } = useAppSession();
   const [inventoryPage, setInventoryPage] = useState<InventoryProductPage | null>(null);
+  const [groupOptions, setGroupOptions] = useState<ProductGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | StockStatus>('all');
+  const [groupFilter, setGroupFilter] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('stock_desc');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [showSortPicker, setShowSortPicker] = useState(false);
+  const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [groupSearch, setGroupSearch] = useState('');
   const [showTopPanel, setShowTopPanel] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [currentPage, setCurrentPage] = useState(1);
@@ -159,15 +174,27 @@ export function StockLevelsScreen() {
                 ? 'negative'
                 : 'all';
 
-      const response = await listInventoryProducts(apiClient, {
-        skip: (currentPage - 1) * pageSize,
-        limit: pageSize,
-        search: search.trim() || undefined,
-        status: statusQuery,
-        sort: sortBy,
-      });
+      const [inventoryResult, groupsResult] = await Promise.allSettled([
+        listInventoryProducts(apiClient, {
+          skip: (currentPage - 1) * pageSize,
+          limit: pageSize,
+          search: search.trim() || undefined,
+          group: groupFilter.trim() || undefined,
+          status: statusQuery,
+          sort: sortBy,
+        }),
+        listProductGroups(apiClient, { skip: 0, limit: 5000 }),
+      ]);
+
+      if (groupsResult.status === 'fulfilled') {
+        setGroupOptions(groupsResult.value);
+      }
+
+      if (inventoryResult.status !== 'fulfilled') {
+        throw inventoryResult.reason;
+      }
       if (requestId === requestIdRef.current) {
-        setInventoryPage(response);
+        setInventoryPage(inventoryResult.value);
       }
     } catch (err) {
       if (requestId !== requestIdRef.current) {
@@ -175,7 +202,7 @@ export function StockLevelsScreen() {
       }
       setError(err instanceof Error ? err.message : 'No se pudo cargar el inventario');
     }
-  }, [apiClient, currentPage, pageSize, search, sortBy, statusFilter]);
+  }, [apiClient, currentPage, groupFilter, pageSize, search, sortBy, statusFilter]);
 
   useEffect(() => {
     let active = true;
@@ -208,7 +235,25 @@ export function StockLevelsScreen() {
   const pageStart = totalProducts === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const pageEnd = Math.min(currentPage * pageSize, totalProducts);
 
-  const hasFilters = Boolean(search.trim()) || statusFilter !== 'all' || sortBy !== 'stock_desc';
+  const groupFilterLabel = useMemo(() => {
+    const value = groupFilter.trim();
+    if (!value) return 'Todas las categorías';
+    return groupOptions.find((group) => group.path === value)?.display_name || value;
+  }, [groupFilter, groupOptions]);
+  const filteredGroupOptions = useMemo(() => {
+    const term = normalizeFilterText(groupSearch);
+    const sorted = [...groupOptions].sort((left, right) => left.path.localeCompare(right.path, 'es', { sensitivity: 'base' }));
+    if (!term) return sorted;
+    return sorted.filter((group) => {
+      return (
+        normalizeFilterText(group.display_name).includes(term) ||
+        normalizeFilterText(group.path).includes(term) ||
+        normalizeFilterText(group.parent_path || '').includes(term)
+      );
+    });
+  }, [groupOptions, groupSearch]);
+
+  const hasFilters = Boolean(search.trim()) || Boolean(groupFilter.trim()) || statusFilter !== 'all' || sortBy !== 'stock_desc';
   const isTableMode = viewMode === 'table';
 
   const showPeekPreview = useCallback((preview: PeekPreview) => {
@@ -285,6 +330,7 @@ export function StockLevelsScreen() {
               onPress={() => {
                 setCurrentPage(1);
                 setSearch('');
+                setGroupFilter('');
                 setStatusFilter('all');
                 setSortBy('stock_desc');
               }}
@@ -413,6 +459,24 @@ export function StockLevelsScreen() {
             </View>
 
             <View style={styles.sortSelectRow}>
+              <Text style={styles.sortSelectLabel}>Categoría</Text>
+              <Pressable
+                style={styles.sortSelectButton}
+                onPress={() => {
+                  setGroupSearch('');
+                  setShowGroupPicker(true);
+                }}
+              >
+                <Text
+                  style={[styles.sortSelectValue, !groupFilter.trim() ? styles.sortSelectPlaceholder : null]}
+                  numberOfLines={1}
+                >
+                  {groupFilterLabel}
+                </Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.sortSelectRow}>
               <Text style={styles.sortSelectLabel}>Ordenar</Text>
               <Pressable style={styles.sortSelectButton} onPress={() => setShowSortPicker(true)}>
                 <Text style={styles.sortSelectValue}>
@@ -529,6 +593,90 @@ export function StockLevelsScreen() {
             <Pressable style={styles.sortPickerCloseButton} onPress={() => setShowSortPicker(false)}>
               <Text style={styles.sortPickerCloseText}>Cerrar</Text>
             </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showGroupPicker} transparent animationType="fade" onRequestClose={() => setShowGroupPicker(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.pickerModalCard}>
+            <View style={styles.pickerModalHeader}>
+              <Text style={styles.sortPickerTitle}>Seleccionar categoría</Text>
+              <Pressable
+                style={styles.pickerCloseButton}
+                onPress={() => {
+                  setShowGroupPicker(false);
+                  setGroupSearch('');
+                }}
+              >
+                <Text style={styles.pickerCloseButtonText}>Cerrar</Text>
+              </Pressable>
+            </View>
+
+            <SearchInput
+              placeholder="Buscar categoría o subcategoría..."
+              placeholderTextColor="#64748B"
+              value={groupSearch}
+              onChangeText={setGroupSearch}
+              onClear={() => setGroupSearch('')}
+              containerStyle={styles.pickerSearchInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <ScrollView style={styles.pickerList} contentContainerStyle={styles.pickerListContent} keyboardShouldPersistTaps="handled">
+              <Pressable
+                style={styles.pickerOption}
+                onPress={() => {
+                  setCurrentPage(1);
+                  setGroupFilter('');
+                  setShowGroupPicker(false);
+                  setGroupSearch('');
+                }}
+              >
+                <Text style={styles.pickerOptionLabel}>Todas</Text>
+                <Text style={styles.pickerOptionSubtitle}>Quita este filtro</Text>
+              </Pressable>
+
+              {filteredGroupOptions.map((group) => {
+                const selected = groupFilter === group.path;
+                const depth = Math.max(0, group.path.split('/').length - 1);
+                return (
+                  <Pressable
+                    key={group.path}
+                    style={[styles.pickerOption, selected ? styles.pickerOptionActive : null]}
+                    onPress={() => {
+                      setCurrentPage(1);
+                      setGroupFilter(group.path);
+                      setShowGroupPicker(false);
+                      setGroupSearch('');
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.pickerOptionLabel,
+                        selected ? styles.pickerOptionLabelActive : null,
+                        { marginLeft: depth * 10 },
+                      ]}
+                    >
+                      {group.display_name}
+                    </Text>
+                    <Text style={styles.pickerOptionSubtitle}>{group.path}</Text>
+                    {group.parent_path ? (
+                      <Text style={styles.pickerOptionSubtitle}>Subgrupo de: {group.parent_path}</Text>
+                    ) : (
+                      <Text style={styles.pickerOptionSubtitle}>Categoría principal</Text>
+                    )}
+                  </Pressable>
+                );
+              })}
+
+              {filteredGroupOptions.length === 0 ? (
+                <View style={styles.stateWrap}>
+                  <Text style={styles.stateText}>No hay categorías que coincidan.</Text>
+                </View>
+              ) : null}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -992,6 +1140,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  sortSelectPlaceholder: {
+    color: '#64748B',
+    fontWeight: '600',
+  },
   filterButton: {
     borderRadius: 999,
     borderWidth: 1,
@@ -1250,6 +1402,82 @@ const styles = StyleSheet.create({
     color: '#334155',
     fontWeight: '800',
     fontSize: 12,
+  },
+  pickerModalCard: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '88%',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    gap: 12,
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
+  },
+  pickerModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  pickerCloseButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  pickerCloseButtonText: {
+    color: '#334155',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  pickerSearchInput: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  pickerList: {
+    maxHeight: 420,
+  },
+  pickerListContent: {
+    gap: 8,
+    paddingBottom: 4,
+  },
+  pickerOption: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D8DFEA',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 2,
+  },
+  pickerOptionActive: {
+    borderColor: '#9ED9B3',
+    backgroundColor: '#DCEFE3',
+  },
+  pickerOptionLabel: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  pickerOptionLabelActive: {
+    color: '#0A8F5A',
+  },
+  pickerOptionSubtitle: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '600',
   },
   tableProductName: {
     color: '#0F172A',

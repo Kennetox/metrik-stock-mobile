@@ -121,4 +121,6 @@ export type ReceivingProductLookup = {
   price: number;
   cost: number;
   label_format?: string | null;
+  active?: boolean | null;
+  is_active?: boolean | null;
 };

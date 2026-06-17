@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, Platform } from 'react-native';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { tabletLogin } from '../services/api/auth';
 import { createApiClient, ApiError } from '../services/api/client';
@@ -119,6 +119,7 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
   const [deviceBlockedReason, setDeviceBlockedReason] = useState<string | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   const [lastSyncCheckAt, setLastSyncCheckAt] = useState<number | null>(null);
+  const syncStatusRequestInFlightRef = useRef(false);
 
   const clearSession = useCallback(() => {
     setToken(null);
@@ -304,7 +305,11 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
       setLastSyncCheckAt(Date.now());
       return;
     }
+    if (syncStatusRequestInFlightRef.current) {
+      return;
+    }
 
+    syncStatusRequestInFlightRef.current = true;
     try {
       const response = await apiClient.get<{ status?: string; reason?: string }>('/auth/session-status');
       const remoteStatus = (response?.status || '').toLowerCase();
@@ -325,6 +330,8 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
       setLastSyncCheckAt(Date.now());
       setSyncStatus('offline');
       setSyncReason(err instanceof Error ? err.message : 'network_error');
+    } finally {
+      syncStatusRequestInFlightRef.current = false;
     }
   }, [apiClient, token]);
 
@@ -381,7 +388,7 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
     };
 
     runCheck();
-    intervalId = setInterval(runCheck, 30000);
+    intervalId = setInterval(runCheck, 60000);
 
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {

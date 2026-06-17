@@ -25,6 +25,7 @@ import {
   getLotDetail,
   listReceivingProductGroups,
   markReceivingLotItemLabelsPrinted,
+  filterActiveReceivingProducts,
   searchReceivingProductsAll,
   updateReceivingLotItem,
 } from '../services/api/receiving';
@@ -575,8 +576,9 @@ export function LotDetailScreen({
       searchReceivingProductsAll(apiClient, term, { includeInactive: true })
         .then(async (results) => {
           if (active) {
-            if (results.length > 0) {
-              setRawResults(results);
+            const activeResults = filterActiveReceivingProducts(results);
+            if (activeResults.length > 0) {
+              setRawResults(activeResults);
               return;
             }
 
@@ -589,13 +591,13 @@ export function LotDetailScreen({
                   includeInactive: true,
                 });
                 if (active) {
-                  setRawResults(fallbackResults);
+                  setRawResults(filterActiveReceivingProducts(fallbackResults));
                   return;
                 }
               }
             }
 
-            setRawResults(results);
+            setRawResults(activeResults);
           }
         })
         .catch(() => {
