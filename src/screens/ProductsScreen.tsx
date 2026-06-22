@@ -19,6 +19,7 @@ import { SearchInput } from '../ui/SearchInput';
 import { TableFocusSection } from '../ui/TableFocusSection';
 import {
   createProduct,
+  getProduct,
   getProductCostSuggestion,
   getProductDuplicateCandidates,
   listProductGroups,
@@ -523,11 +524,7 @@ export function ProductsScreen() {
     }
   }
 
-  async function submitForm() {
-    if (!canMutate) {
-      setFormMessage('Sin conexión con API. Revalida la conexión para continuar.');
-      return;
-    }
+  async function persistForm() {
     if (formMode === 'create' && loadingNextProductCodes) {
       setFormMessage('Generando SKU y código de barras. Espera un momento.');
       return;
@@ -536,6 +533,7 @@ export function ProductsScreen() {
       setFormMessage('No se pudieron generar los códigos automáticos. Intenta de nuevo.');
       return;
     }
+
     const name = form.name.trim();
     if (!name) {
       setFormMessage('Debes indicar un nombre.');
@@ -590,6 +588,58 @@ export function ProductsScreen() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function submitForm() {
+    if (!canMutate) {
+      setFormMessage('Sin conexión con API. Revalida la conexión para continuar.');
+      return;
+    }
+    if (formMode === 'edit' && selectedProduct) {
+      const liveProduct = await getProduct(apiClient, selectedProduct.id).catch(() => selectedProduct);
+      const qtyOnHand = Number(liveProduct.qty_on_hand ?? selectedProduct.qty_on_hand ?? 0);
+      const priceChanged =
+        form.price.trim() !== '' &&
+        Math.abs(parseNumberInput(form.price) - Number(selectedProduct.price || 0)) > 0.01;
+      const deactivatingWithStock = Boolean(liveProduct.active) && !form.active && qtyOnHand > 0;
+      if (deactivatingWithStock) {
+        Alert.alert(
+          'Alerta de inventario',
+          `El producto "${liveProduct.name}" tiene ${qtyOnHand.toLocaleString('es-CO')} unidad${qtyOnHand === 1 ? '' : 'es'} en inventario.\n\nSi lo desactivas, seguirá existiendo stock asociado.`,
+          [
+            { text: 'Cancelar', style: 'cancel' },
+            {
+              text: 'Sí, desactivar igual',
+              style: 'destructive',
+              onPress: () => {
+                persistForm().catch(() => undefined);
+              },
+            },
+          ],
+        );
+        return;
+      }
+
+      if (priceChanged && qtyOnHand > 0) {
+        Alert.alert(
+          'Alerta de etiquetas e inventario',
+          `El producto "${liveProduct.name}" tiene ${qtyOnHand.toLocaleString('es-CO')} unidad${qtyOnHand === 1 ? '' : 'es'} en inventario.\n\nSi guardas este precio, las unidades ya existentes pueden quedar con etiquetas antiguas.`,
+          [
+            { text: 'Cancelar', style: 'cancel' },
+            {
+              text: 'Sí, cambiar precio igual',
+              style: 'destructive',
+              onPress: () => {
+                persistForm().catch(() => undefined);
+              },
+            },
+          ],
+        );
+        return;
+      }
+    }
+
+    await persistForm();
   }
 
   async function handleRefresh() {
