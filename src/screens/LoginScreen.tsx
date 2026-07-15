@@ -341,12 +341,16 @@ export function LoginScreen() {
                 )}
               </View>
 
-              <View style={styles.pinDotsWrap}>
+              <View style={styles.pinBoxesWrap}>
                 {Array.from({ length: PIN_LENGTH }).map((_, index) => (
                   <View
                     key={index}
-                    style={[styles.pinDot, index < pin.length ? styles.pinDotFilled : styles.pinDotEmpty]}
-                  />
+                    style={[styles.pinBox, index < pin.length ? styles.pinBoxFilled : styles.pinBoxEmpty]}
+                  >
+                    <Text style={[styles.pinBoxText, index < pin.length ? styles.pinBoxTextFilled : styles.pinBoxTextEmpty]}>
+                      {pin[index] ?? ''}
+                    </Text>
+                  </View>
                 ))}
               </View>
 
@@ -590,25 +594,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  pinDotsWrap: {
+  pinBoxesWrap: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 12,
-    marginBottom: 10,
-    marginTop: 4,
+    gap: 10,
+    marginBottom: 12,
+    marginTop: 6,
   },
-  pinDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+  pinBox: {
+    width: 60,
+    height: 66,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
   },
-  pinDotFilled: {
-    backgroundColor: COLORS.dotOn,
+  pinBoxFilled: {
+    backgroundColor: '#F8FFFB',
+    borderColor: '#69D3A0',
+    shadowColor: '#0A8F5A',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    elevation: 1,
   },
-  pinDotEmpty: {
-    backgroundColor: COLORS.dotOff,
-    borderWidth: 1,
-    borderColor: COLORS.dotOffBorder,
+  pinBoxEmpty: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#B6C4D8',
+  },
+  pinBoxText: {
+    fontSize: 30,
+    lineHeight: 32,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  pinBoxTextFilled: {
+    color: '#0A8F5A',
+  },
+  pinBoxTextEmpty: {
+    color: '#94A3B8',
   },
   keypad: {
     gap: 10,
