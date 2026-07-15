@@ -134,6 +134,10 @@ function resolveRecountDocumentSortDate(doc: RecountRecord): string {
   return doc.applied_at || doc.closed_at || doc.created_at || '';
 }
 
+function resolveRecountFinishedBy(doc: RecountRecord): string | null {
+  return doc.applied_by_user_name || doc.closed_by_user_name || null;
+}
+
 export function HistoryScreen() {
   const { apiBase, apiClient, stockDeviceId } = useAppSession();
   const [tab, setTab] = useState<'documents' | 'products'>('documents');
@@ -214,13 +218,15 @@ export function HistoryScreen() {
     return docs.filter((doc) => {
       const lot = (doc.lot_number || '').toLowerCase();
       const origin = (doc.origin_name || '').toLowerCase();
-      const user = (doc.closed_by_user_name || '').toLowerCase();
+      const openedBy = (doc.created_by_user_name || '').toLowerCase();
+      const closedBy = (doc.closed_by_user_name || '').toLowerCase();
       const supplier = (doc.supplier_name || '').toLowerCase();
       const notes = (doc.notes || '').toLowerCase();
       return (
         lot.includes(term) ||
         origin.includes(term) ||
-        user.includes(term) ||
+        openedBy.includes(term) ||
+        closedBy.includes(term) ||
         supplier.includes(term) ||
         notes.includes(term)
       );
@@ -238,8 +244,15 @@ export function HistoryScreen() {
           const code = (doc.code || '').toLowerCase();
           const title = (doc.title || '').toLowerCase();
           const scope = (doc.scope_value || '').toLowerCase();
-          const user = (doc.closed_by_user_name || doc.applied_by_user_name || '').toLowerCase();
-          return code.includes(term) || title.includes(term) || scope.includes(term) || user.includes(term);
+          const openedBy = (doc.created_by_user_name || '').toLowerCase();
+          const finishedBy = (resolveRecountFinishedBy(doc) || '').toLowerCase();
+          return (
+            code.includes(term) ||
+            title.includes(term) ||
+            scope.includes(term) ||
+            openedBy.includes(term) ||
+            finishedBy.includes(term)
+          );
         });
     const ranged = recountItems.filter((doc) => {
       const finishedAt = doc.applied_at || doc.closed_at || doc.created_at;
@@ -454,9 +467,13 @@ export function HistoryScreen() {
                   <Text style={styles.modalMeta}>Origen: {selectedDoc.origin_name}</Text>
                   <Text style={styles.modalMeta}>Líneas: {selectedDoc.lines_count}</Text>
                   <Text style={styles.modalMeta}>Unidades: {selectedDoc.units_total}</Text>
+                  <Text style={styles.modalMeta}>Apertura: {formatDateTime(selectedDoc.created_at)}</Text>
+                  {selectedDoc.created_by_user_name ? (
+                    <Text style={styles.modalMeta}>Abrió: {selectedDoc.created_by_user_name}</Text>
+                  ) : null}
                   <Text style={styles.modalMeta}>Cerrado: {formatDateTime(selectedDoc.closed_at)}</Text>
                   {selectedDoc.closed_by_user_name ? (
-                    <Text style={styles.modalMeta}>Responsable: {selectedDoc.closed_by_user_name}</Text>
+                    <Text style={styles.modalMeta}>Cerró: {selectedDoc.closed_by_user_name}</Text>
                   ) : null}
                   {selectedDoc.supplier_name ? (
                     <Text style={styles.modalMeta}>Proveedor: {selectedDoc.supplier_name}</Text>
@@ -485,14 +502,25 @@ export function HistoryScreen() {
                     Líneas: {selectedRecount.summary.counted_lines}/{selectedRecount.summary.total_lines}
                   </Text>
                   <Text style={styles.modalMeta}>Dif: {selectedRecount.summary.difference_lines}</Text>
+                  <Text style={styles.modalMeta}>Apertura: {formatDateTime(selectedRecount.created_at)}</Text>
+                  {selectedRecount.created_by_user_name ? (
+                    <Text style={styles.modalMeta}>Abrió: {selectedRecount.created_by_user_name}</Text>
+                  ) : null}
+                  {selectedRecount.closed_at ? (
+                    <Text style={styles.modalMeta}>Cierre: {formatDateTime(selectedRecount.closed_at)}</Text>
+                  ) : null}
+                  {selectedRecount.closed_by_user_name ? (
+                    <Text style={styles.modalMeta}>Cerró: {selectedRecount.closed_by_user_name}</Text>
+                  ) : null}
+                  {selectedRecount.applied_at ? (
+                    <Text style={styles.modalMeta}>Aplicado: {formatDateTime(selectedRecount.applied_at)}</Text>
+                  ) : null}
+                  {selectedRecount.applied_by_user_name ? (
+                    <Text style={styles.modalMeta}>Aplicó: {selectedRecount.applied_by_user_name}</Text>
+                  ) : null}
                   <Text style={styles.modalMeta}>
                     Finalizado: {formatDateTime(resolveRecountDocumentSortDate(selectedRecount))}
                   </Text>
-                  {selectedRecount.applied_by_user_name || selectedRecount.closed_by_user_name ? (
-                    <Text style={styles.modalMeta}>
-                      Responsable: {selectedRecount.applied_by_user_name || selectedRecount.closed_by_user_name}
-                    </Text>
-                  ) : null}
                 </View>
               ) : null}
             </View>
@@ -719,9 +747,13 @@ export function HistoryScreen() {
                     <Text style={styles.cardMeta}>Origen: {doc.origin_name}</Text>
                     <Text style={styles.cardMeta}>Tipo: {formatPurchaseType(doc.purchase_type)}</Text>
                     <Text style={styles.cardMeta}>Líneas: {doc.lines_count} · Unidades: {doc.units_total}</Text>
+                    <Text style={styles.cardMeta}>Apertura: {formatDateTime(doc.created_at)}</Text>
+                    {doc.created_by_user_name ? (
+                      <Text style={styles.cardMeta}>Abrió: {doc.created_by_user_name}</Text>
+                    ) : null}
                     <Text style={styles.cardMeta}>Cerrado: {formatDateTime(doc.closed_at)}</Text>
                     {doc.closed_by_user_name ? (
-                      <Text style={styles.cardMeta}>Responsable: {doc.closed_by_user_name}</Text>
+                      <Text style={styles.cardMeta}>Cerró: {doc.closed_by_user_name}</Text>
                     ) : null}
                   </Pressable>
                 );
@@ -737,14 +769,21 @@ export function HistoryScreen() {
                   <Text style={styles.cardMeta}>
                     Líneas: {doc.summary.counted_lines}/{doc.summary.total_lines} · Dif: {doc.summary.difference_lines}
                   </Text>
+                  <Text style={styles.cardMeta}>Apertura: {formatDateTime(doc.created_at)}</Text>
+                  {doc.created_by_user_name ? (
+                    <Text style={styles.cardMeta}>Abrió: {doc.created_by_user_name}</Text>
+                  ) : null}
+                  {doc.closed_at ? <Text style={styles.cardMeta}>Cierre: {formatDateTime(doc.closed_at)}</Text> : null}
+                  {doc.closed_by_user_name ? (
+                    <Text style={styles.cardMeta}>Cerró: {doc.closed_by_user_name}</Text>
+                  ) : null}
+                  {doc.applied_at ? <Text style={styles.cardMeta}>Aplicado: {formatDateTime(doc.applied_at)}</Text> : null}
+                  {doc.applied_by_user_name ? (
+                    <Text style={styles.cardMeta}>Aplicó: {doc.applied_by_user_name}</Text>
+                  ) : null}
                   <Text style={styles.cardMeta}>
                     Finalizado: {formatDateTime(resolveRecountDocumentSortDate(doc))}
                   </Text>
-                  {doc.closed_by_user_name || doc.applied_by_user_name ? (
-                    <Text style={styles.cardMeta}>
-                      Responsable: {doc.applied_by_user_name || doc.closed_by_user_name}
-                    </Text>
-                  ) : null}
                 </Pressable>
               );
             })

@@ -36,10 +36,29 @@ function belongsToStockDevice(stockDeviceId: string, candidate?: string | null):
   return current === lotDevice;
 }
 
+function formatPurchaseType(type: string) {
+  if (type === 'cash') return 'Contado';
+  if (type === 'invoice') return 'Factura';
+  return type;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString('es-CO', {
+    timeZone: 'America/Bogota',
+    hour12: false,
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }) {
   const { apiClient, stationId, stationLabel, stockDeviceId, syncStatus } = useAppSession();
   const [lots, setLots] = useState<ReceivingLot[]>([]);
-  const [latestClosedLot, setLatestClosedLot] = useState<ReceivingLot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -48,6 +67,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   const [createSupplier, setCreateSupplier] = useState('');
   const [createReference, setCreateReference] = useState('');
   const [createNotes, setCreateNotes] = useState('');
+  const [createModalError, setCreateModalError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [selectedLot, setSelectedLot] = useState<ReceivingLot | null>(null);
   const [showLotActionsModal, setShowLotActionsModal] = useState(false);
@@ -69,22 +89,18 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
     return false;
   }
 
+  const orderedLots = [...lots].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  const primaryLot = orderedLots[0] ?? null;
+  const hasOpenLots = orderedLots.length > 0;
+
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [openLots, closedLots] = await Promise.all([
-        listLots(apiClient, { status: 'open', limit: 50, skip: 0 }),
-        listLots(apiClient, { status: 'closed', limit: 50, skip: 0 }),
-      ]);
+      const openLots = await listLots(apiClient, { status: 'open', limit: 50, skip: 0 });
       const filteredOpenLots = openLots.items.filter((lot) =>
         belongsToStockDevice(stockDeviceId, lot.stock_device_id),
       );
-      const filteredClosedLots = closedLots.items
-        .filter((lot) => belongsToStockDevice(stockDeviceId, lot.stock_device_id))
-        .sort((a, b) => (b.closed_at || b.created_at || '').localeCompare(a.closed_at || a.created_at || ''));
-
       setLots(filteredOpenLots);
-      setLatestClosedLot(filteredClosedLots[0] ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron cargar lotes');
     }
@@ -103,8 +119,10 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
     };
   }, [load]);
 
-  async function handleCreateLot() {
+  function openCreateLotModal() {
     if (!ensureCanMutate()) return;
+    setError(null);
+    setCreateModalError(null);
     setCreateType('cash');
     setCreateOrigin(stationLabel?.trim() || stationId || 'Recepción');
     setCreateSupplier('');
@@ -112,6 +130,29 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
     setCreateNotes('');
     setCreateSupportFile(null);
     setShowCreateModal(true);
+  }
+
+  async function handleCreateLot() {
+    if (!ensureCanMutate()) return;
+    if (!hasOpenLots || !primaryLot) {
+      openCreateLotModal();
+      return;
+    }
+    Alert.alert(
+      'Ya hay lotes en curso',
+      'Continúa un lote existente antes de abrir otro para evitar recepciones duplicadas.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Continuar lote',
+          onPress: () => onOpenLot(primaryLot.id),
+        },
+        {
+          text: 'Crear otro',
+          onPress: openCreateLotModal,
+        },
+      ],
+    );
   }
 
   async function pickSupportFromFiles(): Promise<SupportDraftFile | null> {
@@ -191,18 +232,19 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
 
   async function submitCreateLot() {
     if (!ensureCanMutate()) return;
+    setCreateModalError(null);
     const origin = createOrigin.trim();
     if (!origin) {
-      setError('Debes indicar el origen del lote.');
+      setCreateModalError('Debes indicar el origen del lote.');
       return;
     }
     if (createType === 'invoice') {
       if (!createSupplier.trim()) {
-        setError('Para factura, el proveedor es obligatorio.');
+        setCreateModalError('Para factura, el proveedor es obligatorio.');
         return;
       }
       if (!createReference.trim()) {
-        setError('Para factura, la referencia/número de factura es obligatorio.');
+        setCreateModalError('Para factura, la referencia/número de factura es obligatorio.');
         return;
       }
     }
@@ -222,9 +264,12 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
       }
       setShowCreateModal(false);
       setCreateSupportFile(null);
+      setCreateModalError(null);
       onOpenLot(created.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo crear el lote');
+      const message = err instanceof Error ? err.message : 'No se pudo crear el lote';
+      setCreateModalError(message);
+      setError(message);
     } finally {
       setCreating(false);
     }
@@ -311,70 +356,135 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
 
   return (
     <ScreenContainer backgroundColor="#E9EDF3">
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Lotes abiertos</Text>
-        <View style={styles.actions}>
+      <View style={[styles.statusHero, hasOpenLots ? styles.statusHeroActive : styles.statusHeroIdle]}>
+        <View style={styles.statusHeaderRow}>
+          <View style={[styles.statusBadge, hasOpenLots ? styles.statusBadgeActive : styles.statusBadgeIdle]}>
+            <Text style={[styles.statusBadgeText, hasOpenLots ? styles.statusBadgeTextActive : styles.statusBadgeTextIdle]}>
+              {hasOpenLots ? 'EN CURSO' : 'LISTO'}
+            </Text>
+          </View>
           <Pressable
-            style={[styles.button, !canMutate ? styles.buttonDisabled : null]}
+            style={[
+              hasOpenLots ? styles.secondaryButton : styles.primaryButton,
+              !canMutate ? styles.buttonDisabled : null,
+            ]}
             onPress={handleCreateLot}
             disabled={!canMutate}
           >
-            <Text style={styles.buttonText}>Nuevo lote</Text>
+            <Text style={hasOpenLots ? styles.secondaryButtonText : styles.primaryButtonText}>
+              {hasOpenLots ? 'Crear otro lote' : 'Nuevo lote'}
+            </Text>
           </Pressable>
         </View>
+
+        <Text style={styles.statusTitle}>
+          {hasOpenLots
+            ? orderedLots.length === 1
+              ? 'Hay 1 lote en curso'
+              : `Hay ${orderedLots.length} lotes en curso`
+            : 'No hay lotes en curso'}
+        </Text>
+        <Text style={styles.statusDescription}>
+          {hasOpenLots
+            ? 'Continúa un lote existente antes de abrir otro para mantener la recepción clara y sin duplicados.'
+            : 'La tablet está lista para iniciar una nueva recepción.'}
+        </Text>
+
+        {primaryLot ? (
+          <View style={styles.statusRecommendation}>
+            <Text style={styles.statusRecommendationLabel}>Recomendado ahora</Text>
+            <Text style={styles.statusRecommendationTitle}>{primaryLot.lot_number}</Text>
+            <Text style={styles.statusRecommendationMeta}>
+              Abierto: {formatDateTime(primaryLot.created_at)}
+              {primaryLot.created_by_user_name ? ` · ${primaryLot.created_by_user_name}` : ''}
+            </Text>
+            <View style={styles.statusActionRow}>
+              <Pressable style={styles.primaryButton} onPress={() => onOpenLot(primaryLot.id)}>
+                <Text style={styles.primaryButtonText}>Continuar lote</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
       </View>
 
       {loading ? <ActivityIndicator color="#93c5fd" /> : null}
       {!canMutate ? <Text style={styles.warning}>Sin conexión: edición y cierre de documentos bloqueados.</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <View style={styles.list}>
-        {lots.length === 0 && !loading ? <Text style={styles.empty}>Sin lotes abiertos</Text> : null}
+      <View style={styles.sectionHeader}>
+        <View>
+          <Text style={styles.title}>Lotes en curso</Text>
+          <Text style={styles.sectionSubtitle}>
+            {hasOpenLots
+              ? 'Abre uno existente para continuar la recepción.'
+              : 'No hay lotes abiertos en esta tablet.'}
+          </Text>
+        </View>
+        {hasOpenLots ? (
+          <View style={styles.sectionCounter}>
+            <Text style={styles.sectionCounterText}>{orderedLots.length}</Text>
+          </View>
+        ) : null}
+      </View>
 
-        {lots.map((lot) => (
-          <View key={lot.id} style={styles.lotCard}>
-            <View style={styles.lotCardRow}>
-              <Pressable style={styles.lotMainPressable} onPress={() => onOpenLot(lot.id)}>
+      <View style={styles.list}>
+        {!hasOpenLots && !loading ? (
+          <View style={styles.emptyStateCard}>
+            <Text style={styles.emptyStateTitle}>Sin lotes abiertos</Text>
+            <Text style={styles.emptyStateText}>
+              Cuando inicies una recepción, el lote activo aparecerá aquí con acceso rápido para continuar.
+            </Text>
+          </View>
+        ) : null}
+
+        {orderedLots.map((lot, index) => (
+          <View
+            key={lot.id}
+            style={[styles.lotCard, index === 0 ? styles.lotCardPriority : null]}
+          >
+            <View style={styles.lotCardTopRow}>
+              <View style={styles.lotIdentity}>
                 <Text style={styles.lotNumber}>{lot.lot_number}</Text>
-                <Text style={styles.lotMeta}>{lot.origin_name}</Text>
-                <Text style={styles.lotMeta}>Tipo: {formatPurchaseType(lot.purchase_type)}</Text>
-                {lot.purchase_type === 'invoice' && lot.supplier_name ? (
-                  <Text style={styles.lotMeta}>Proveedor: {lot.supplier_name}</Text>
-                ) : null}
-                {lot.purchase_type === 'invoice' && (lot.invoice_reference || lot.source_reference) ? (
-                  <Text style={styles.lotMeta}>Ref: {lot.invoice_reference ?? lot.source_reference}</Text>
-                ) : null}
-                {lot.notes ? <Text style={styles.lotMeta}>Obs: {lot.notes}</Text> : null}
-              </Pressable>
-              <Pressable style={styles.moreButton} onPress={() => openLotActions(lot)}>
-                <Text style={styles.moreButtonText}>⋮</Text>
+                <Text style={styles.lotMetaStrong}>{lot.origin_name}</Text>
+              </View>
+              <View style={styles.lotTopActions}>
+                <View style={styles.lotStatusBadge}>
+                  <Text style={styles.lotStatusBadgeText}>En curso</Text>
+                </View>
+                <Pressable style={styles.moreButton} onPress={() => openLotActions(lot)}>
+                  <Text style={styles.moreButtonText}>⋮</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.lotDetails}>
+              <Text style={styles.lotMeta}>Tipo: {formatPurchaseType(lot.purchase_type)}</Text>
+              <Text style={styles.lotMeta}>Apertura: {formatDateTime(lot.created_at)}</Text>
+              {lot.created_by_user_name ? <Text style={styles.lotMeta}>Abrió: {lot.created_by_user_name}</Text> : null}
+              {lot.purchase_type === 'invoice' && lot.supplier_name ? (
+                <Text style={styles.lotMeta}>Proveedor: {lot.supplier_name}</Text>
+              ) : null}
+              {lot.purchase_type === 'invoice' && (lot.invoice_reference || lot.source_reference) ? (
+                <Text style={styles.lotMeta}>Ref: {lot.invoice_reference ?? lot.source_reference}</Text>
+              ) : null}
+              {lot.notes ? <Text style={styles.lotMeta}>Obs: {lot.notes}</Text> : null}
+            </View>
+
+            <View style={styles.lotCardActions}>
+              <Pressable style={styles.primaryButton} onPress={() => onOpenLot(lot.id)}>
+                <Text style={styles.primaryButtonText}>Abrir lote</Text>
               </Pressable>
             </View>
           </View>
         ))}
-
-        <View style={styles.lastClosedWrap}>
-          <Text style={styles.lastClosedTitle}>Último lote cerrado</Text>
-          {latestClosedLot ? (
-            <View style={styles.closedCard}>
-              <Text style={styles.lotNumber}>{latestClosedLot.lot_number}</Text>
-              <Text style={styles.lotMeta}>{latestClosedLot.origin_name}</Text>
-              <Text style={styles.lotMeta}>Tipo: {formatPurchaseType(latestClosedLot.purchase_type)}</Text>
-              {latestClosedLot.purchase_type === 'invoice' && latestClosedLot.supplier_name ? (
-                <Text style={styles.lotMeta}>Proveedor: {latestClosedLot.supplier_name}</Text>
-              ) : null}
-              {latestClosedLot.notes ? <Text style={styles.lotMeta}>Obs: {latestClosedLot.notes}</Text> : null}
-            </View>
-          ) : (
-            <Text style={styles.empty}>Aún no hay lotes cerrados</Text>
-          )}
-        </View>
       </View>
 
       <Modal visible={showCreateModal} transparent animationType="fade" onRequestClose={() => setShowCreateModal(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Nuevo lote</Text>
+
+            {createModalError ? <Text style={styles.modalError}>{createModalError}</Text> : null}
 
             <Text style={styles.modalLabel}>Tipo de compra</Text>
             <View style={styles.typeRow}>
@@ -459,6 +569,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
                 onPress={() => {
                   setShowCreateModal(false);
                   setCreateSupportFile(null);
+                  setCreateModalError(null);
                 }}
                 disabled={creating}
               >
@@ -625,61 +736,217 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
   );
 }
 
-function formatPurchaseType(type: string) {
-  if (type === 'cash') return 'Contado';
-  if (type === 'invoice') return 'Factura';
-  return type;
-}
-
 const styles = StyleSheet.create({
-  headerRow: {
+  statusHero: {
+    borderRadius: 22,
+    padding: 18,
+    gap: 12,
+    borderWidth: 1,
+  },
+  statusHeroActive: {
+    backgroundColor: '#F7FCEB',
+    borderColor: '#C8DEA1',
+  },
+  statusHeroIdle: {
+    backgroundColor: '#F3FAF7',
+    borderColor: '#B7DEC9',
+  },
+  statusHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 12,
   },
-  actions: {
+  statusBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  statusBadgeActive: {
+    backgroundColor: '#FFF7D6',
+    borderColor: '#E7C76A',
+  },
+  statusBadgeIdle: {
+    backgroundColor: '#DFF4E8',
+    borderColor: '#8AC7A5',
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  statusBadgeTextActive: {
+    color: '#9A6700',
+  },
+  statusBadgeTextIdle: {
+    color: '#0B6B45',
+  },
+  statusTitle: {
+    color: '#0F172A',
+    fontSize: 26,
+    lineHeight: 30,
+    fontWeight: '800',
+  },
+  statusDescription: {
+    color: '#334155',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  statusRecommendation: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#D7E7BA',
+    padding: 14,
+    gap: 6,
+  },
+  statusRecommendationLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  statusRecommendationTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  statusRecommendationMeta: {
+    color: '#334155',
+    fontSize: 13,
+  },
+  statusActionRow: {
+    marginTop: 8,
     flexDirection: 'row',
-    gap: 8,
+  },
+  sectionHeader: {
+    marginTop: 18,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
   },
   title: {
     color: '#0F172A',
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '800',
   },
-  button: {
+  sectionSubtitle: {
+    marginTop: 4,
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  sectionCounter: {
+    minWidth: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#DFF4E8',
+    borderWidth: 1,
+    borderColor: '#9ED9B3',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  sectionCounterText: {
+    color: '#0A8F5A',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  primaryButton: {
     backgroundColor: '#0A8F5A',
     borderWidth: 1,
     borderColor: '#67C48D',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 14,
+  },
+  primaryButtonText: {
+    color: '#F8FAFC',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  secondaryButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#C7D2E0',
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 10,
+    borderRadius: 14,
   },
-  buttonText: {
-    color: '#F8FAFC',
+  secondaryButtonText: {
+    color: '#334155',
     fontWeight: '700',
   },
   buttonDisabled: {
     opacity: 0.55,
   },
   list: {
-    gap: 10,
+    marginTop: 12,
+    gap: 12,
+  },
+  emptyStateCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#D5DEE9',
+    padding: 18,
+    gap: 6,
+  },
+  emptyStateTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  emptyStateText: {
+    color: '#475569',
+    lineHeight: 20,
   },
   lotCard: {
-    backgroundColor: '#CFD8E3',
-    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#B7C4D5',
-    padding: 12,
-    gap: 2,
+    borderColor: '#D3DEE8',
+    padding: 14,
+    gap: 12,
   },
-  lotCardRow: {
+  lotCardPriority: {
+    borderColor: '#A7D6B6',
+    backgroundColor: '#FCFEFD',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  lotCardTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  lotIdentity: {
+    flex: 1,
+  },
+  lotTopActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
-  lotMainPressable: {
-    flex: 1,
+  lotStatusBadge: {
+    backgroundColor: '#FFF4D6',
+    borderWidth: 1,
+    borderColor: '#EAC76A',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  lotStatusBadgeText: {
+    color: '#946200',
+    fontSize: 11,
+    fontWeight: '800',
   },
   moreButton: {
     width: 34,
@@ -700,14 +967,39 @@ const styles = StyleSheet.create({
   },
   lotNumber: {
     color: '#0F172A',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 19,
+    fontWeight: '800',
+  },
+  lotMetaStrong: {
+    marginTop: 2,
+    color: '#334155',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  lotDetails: {
+    gap: 4,
   },
   lotMeta: {
     color: '#334155',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  lotCardActions: {
+    flexDirection: 'row',
   },
   error: {
     color: '#fda4af',
+  },
+  modalError: {
+    color: '#B42318',
+    backgroundColor: '#FEF3F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    lineHeight: 18,
   },
   warning: {
     color: '#92400E',
@@ -721,23 +1013,6 @@ const styles = StyleSheet.create({
   },
   empty: {
     color: '#475569',
-  },
-  lastClosedWrap: {
-    marginTop: 10,
-    gap: 8,
-  },
-  lastClosedTitle: {
-    color: '#0F172A',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  closedCard: {
-    backgroundColor: '#E2E8F0',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    padding: 12,
-    gap: 2,
   },
   modalBackdrop: {
     flex: 1,

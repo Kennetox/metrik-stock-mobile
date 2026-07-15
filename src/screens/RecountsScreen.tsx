@@ -873,8 +873,8 @@ export function RecountsScreen({
       return;
     }
     const qty = Number(manualQty);
-    if (!Number.isFinite(qty) || qty <= 0) {
-      setError('La cantidad manual debe ser mayor a 0.');
+    if (!Number.isFinite(qty) || qty < 0) {
+      setError('La cantidad manual debe ser 0 o mayor.');
       return;
     }
     setManualSubmitting(true);
@@ -1258,23 +1258,28 @@ export function RecountsScreen({
         <Pressable
           style={styles.qtyStepBtn}
           onPress={() => {
-            const current = Number(manualQty) || 1;
-            setManualQty(String(Math.max(1, current - 1)));
+            const current = Number(manualQty);
+            const safeCurrent = Number.isFinite(current) ? current : 1;
+            setManualQty(String(Math.max(0, safeCurrent - 1)));
           }}
         >
           <Text style={styles.qtyStepText}>-</Text>
         </Pressable>
         <TextInput
           value={manualQty}
-          onChangeText={setManualQty}
+          onChangeText={(value) => {
+            const normalized = value.replace(/[^\d]/g, '');
+            setManualQty(normalized);
+          }}
           style={[styles.modalInput, styles.manualQtyInput]}
           keyboardType="numeric"
         />
         <Pressable
           style={styles.qtyStepBtn}
           onPress={() => {
-            const current = Number(manualQty) || 1;
-            setManualQty(String(current + 1));
+            const current = Number(manualQty);
+            const safeCurrent = Number.isFinite(current) ? current : 0;
+            setManualQty(String(safeCurrent + 1));
           }}
         >
           <Text style={styles.qtyStepText}>+</Text>

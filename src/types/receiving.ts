@@ -17,7 +17,9 @@ export type ReceivingLot = {
   support_file_url?: string | null;
   support_file_size?: number | null;
   created_by_user_id?: number | null;
+  created_by_user_name?: string | null;
   closed_by_user_id?: number | null;
+  closed_by_user_name?: string | null;
   created_at: string;
   closed_at?: string | null;
 };
@@ -75,6 +77,9 @@ export type ReceivingDocument = {
   stock_device_name?: string | null;
   lines_count: number;
   units_total: number;
+  created_by_user_id?: number | null;
+  created_by_user_name?: string | null;
+  closed_by_user_id?: number | null;
   created_at: string;
   closed_at?: string | null;
   closed_by_user_name?: string | null;

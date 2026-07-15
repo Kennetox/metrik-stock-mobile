@@ -68,6 +68,7 @@ export function HomeScreen() {
   const [recountWorkspaceOpen, setRecountWorkspaceOpen] = useState(false);
   const [recountBackSignal, setRecountBackSignal] = useState(0);
   const [showSyncModal, setShowSyncModal] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [refreshingSync, setRefreshingSync] = useState(false);
   const inLotWorkspace = selectedLotId !== null;
   const inRecountWorkspace = tab === 'recounts' && recountWorkspaceOpen;
@@ -100,6 +101,7 @@ export function HomeScreen() {
   function handleSelectTab(nextTab: TabKey) {
     setTab(nextTab);
     setVisitedTabs((prev) => (prev[nextTab] ? prev : { ...prev, [nextTab]: true }));
+    setShowUserMenu(false);
   }
 
   return (
@@ -139,9 +141,11 @@ export function HomeScreen() {
             <View style={[styles.syncDot, { backgroundColor: syncMeta.color }]} />
           </Pressable>
           {!showTopBackButton ? (
-            <Text style={styles.topMeta} numberOfLines={1} ellipsizeMode="tail">
-              {user?.name ?? 'Usuario'}
-            </Text>
+            <Pressable onPress={() => setShowUserMenu((prev) => !prev)} hitSlop={8}>
+              <Text style={styles.topMeta} numberOfLines={1} ellipsizeMode="tail">
+                {user?.name ?? 'Usuario'}
+              </Text>
+            </Pressable>
           ) : null}
         </View>
       </View>
@@ -265,6 +269,27 @@ export function HomeScreen() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      <Modal visible={showUserMenu} transparent animationType="fade" onRequestClose={() => setShowUserMenu(false)}>
+        <Pressable style={styles.userMenuBackdrop} onPress={() => setShowUserMenu(false)}>
+          <View style={styles.userMenuAnchor}>
+            <Pressable
+              style={styles.userMenuCard}
+              onPress={() => undefined}
+            >
+              <Pressable
+                style={styles.userMenuItem}
+                onPress={() => {
+                  setShowUserMenu(false);
+                  logout();
+                }}
+              >
+                <Text style={styles.userMenuItemText}>Cerrar sesión</Text>
+              </Pressable>
+            </Pressable>
+          </View>
+        </Pressable>
       </Modal>
     </View>
   );
@@ -705,6 +730,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  userMenuBackdrop: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  userMenuAnchor: {
+    alignItems: 'flex-end',
+    paddingTop: 74,
+    paddingRight: 16,
+  },
+  userMenuCard: {
+    minWidth: 168,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#D8DFEA',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
+    overflow: 'hidden',
+  },
+  userMenuItem: {
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  userMenuItemText: {
+    color: '#B42318',
+    fontSize: 14,
+    fontWeight: '700',
   },
   syncChip: {
     width: 24,
