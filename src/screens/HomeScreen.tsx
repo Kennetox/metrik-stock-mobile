@@ -13,6 +13,7 @@ import { LotsScreen } from './LotsScreen';
 import { ProductsScreen } from './ProductsScreen';
 import { StockLevelsScreen } from './StockLevelsScreen';
 import { RecountsScreen } from './RecountsScreen';
+import { formatBogotaDateTime } from '../utils/dateTime';
 
 type TabKey = 'lots' | 'recounts' | 'labels' | 'products' | 'stockLevels' | 'history' | 'profile';
 
@@ -86,8 +87,8 @@ export function HomeScreen() {
       : navReservedSpace;
 
   const syncMeta = getSyncMeta(syncStatus);
-  const lastSyncText = lastSyncAt ? formatDateTime(lastSyncAt) : 'Sin sincronización confirmada';
-  const lastCheckText = lastSyncCheckAt ? formatDateTime(lastSyncCheckAt) : 'Sin chequeo aún';
+  const lastSyncText = lastSyncAt ? formatBogotaDateTime(lastSyncAt) : 'Sin sincronización confirmada';
+  const lastCheckText = lastSyncCheckAt ? formatBogotaDateTime(lastSyncCheckAt) : 'Sin chequeo aún';
 
   async function handleRefreshSync() {
     setRefreshingSync(true);
@@ -300,19 +301,6 @@ function getSyncMeta(status: string) {
   if (status === 'degraded') return { label: 'Sesión o sync con advertencia', color: COLORS.syncDegraded };
   if (status === 'offline') return { label: 'Sin conexión con API', color: COLORS.syncOffline };
   return { label: 'Validando conexión', color: COLORS.syncChecking };
-}
-
-function formatDateTime(timestamp: number) {
-  return new Date(timestamp).toLocaleString('es-CO', {
-    timeZone: 'America/Bogota',
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
 }
 
 function escapeHtml(input: string): string {

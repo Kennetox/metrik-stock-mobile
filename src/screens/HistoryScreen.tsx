@@ -19,6 +19,7 @@ import type { RecountDetail, RecountRecord } from '../types/recounts';
 import type { ReceivingCreatedProduct, ReceivingDocument, ReceivingLotDetail } from '../types/receiving';
 import { ScreenContainer } from '../ui/ScreenContainer';
 import { SearchInput } from '../ui/SearchInput';
+import { formatBogotaDateTime } from '../utils/dateTime';
 
 function formatPurchaseType(type: string) {
   if (type === 'cash') return 'Contado';
@@ -32,21 +33,6 @@ function formatRecountStatus(status: RecountRecord['status']) {
   if (status === 'cancelled') return 'Cancelado';
   if (status === 'counting') return 'En conteo';
   return 'Borrador';
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return '—';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString('es-CO', {
-    timeZone: 'America/Bogota',
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 function formatQty(value?: number | null): string {
@@ -467,11 +453,11 @@ export function HistoryScreen() {
                   <Text style={styles.modalMeta}>Origen: {selectedDoc.origin_name}</Text>
                   <Text style={styles.modalMeta}>Líneas: {selectedDoc.lines_count}</Text>
                   <Text style={styles.modalMeta}>Unidades: {selectedDoc.units_total}</Text>
-                  <Text style={styles.modalMeta}>Apertura: {formatDateTime(selectedDoc.created_at)}</Text>
+                  <Text style={styles.modalMeta}>Apertura: {formatBogotaDateTime(selectedDoc.created_at)}</Text>
                   {selectedDoc.created_by_user_name ? (
                     <Text style={styles.modalMeta}>Abrió: {selectedDoc.created_by_user_name}</Text>
                   ) : null}
-                  <Text style={styles.modalMeta}>Cerrado: {formatDateTime(selectedDoc.closed_at)}</Text>
+                  <Text style={styles.modalMeta}>Cerrado: {formatBogotaDateTime(selectedDoc.closed_at)}</Text>
                   {selectedDoc.closed_by_user_name ? (
                     <Text style={styles.modalMeta}>Cerró: {selectedDoc.closed_by_user_name}</Text>
                   ) : null}
@@ -502,24 +488,24 @@ export function HistoryScreen() {
                     Líneas: {selectedRecount.summary.counted_lines}/{selectedRecount.summary.total_lines}
                   </Text>
                   <Text style={styles.modalMeta}>Dif: {selectedRecount.summary.difference_lines}</Text>
-                  <Text style={styles.modalMeta}>Apertura: {formatDateTime(selectedRecount.created_at)}</Text>
+                  <Text style={styles.modalMeta}>Apertura: {formatBogotaDateTime(selectedRecount.created_at)}</Text>
                   {selectedRecount.created_by_user_name ? (
                     <Text style={styles.modalMeta}>Abrió: {selectedRecount.created_by_user_name}</Text>
                   ) : null}
                   {selectedRecount.closed_at ? (
-                    <Text style={styles.modalMeta}>Cierre: {formatDateTime(selectedRecount.closed_at)}</Text>
+                    <Text style={styles.modalMeta}>Cierre: {formatBogotaDateTime(selectedRecount.closed_at)}</Text>
                   ) : null}
                   {selectedRecount.closed_by_user_name ? (
                     <Text style={styles.modalMeta}>Cerró: {selectedRecount.closed_by_user_name}</Text>
                   ) : null}
                   {selectedRecount.applied_at ? (
-                    <Text style={styles.modalMeta}>Aplicado: {formatDateTime(selectedRecount.applied_at)}</Text>
+                    <Text style={styles.modalMeta}>Aplicado: {formatBogotaDateTime(selectedRecount.applied_at)}</Text>
                   ) : null}
                   {selectedRecount.applied_by_user_name ? (
                     <Text style={styles.modalMeta}>Aplicó: {selectedRecount.applied_by_user_name}</Text>
                   ) : null}
                   <Text style={styles.modalMeta}>
-                    Finalizado: {formatDateTime(resolveRecountDocumentSortDate(selectedRecount))}
+                    Finalizado: {formatBogotaDateTime(resolveRecountDocumentSortDate(selectedRecount))}
                   </Text>
                 </View>
               ) : null}
@@ -747,11 +733,11 @@ export function HistoryScreen() {
                     <Text style={styles.cardMeta}>Origen: {doc.origin_name}</Text>
                     <Text style={styles.cardMeta}>Tipo: {formatPurchaseType(doc.purchase_type)}</Text>
                     <Text style={styles.cardMeta}>Líneas: {doc.lines_count} · Unidades: {doc.units_total}</Text>
-                    <Text style={styles.cardMeta}>Apertura: {formatDateTime(doc.created_at)}</Text>
+                    <Text style={styles.cardMeta}>Apertura: {formatBogotaDateTime(doc.created_at)}</Text>
                     {doc.created_by_user_name ? (
                       <Text style={styles.cardMeta}>Abrió: {doc.created_by_user_name}</Text>
                     ) : null}
-                    <Text style={styles.cardMeta}>Cerrado: {formatDateTime(doc.closed_at)}</Text>
+                    <Text style={styles.cardMeta}>Cerrado: {formatBogotaDateTime(doc.closed_at)}</Text>
                     {doc.closed_by_user_name ? (
                       <Text style={styles.cardMeta}>Cerró: {doc.closed_by_user_name}</Text>
                     ) : null}
@@ -769,20 +755,20 @@ export function HistoryScreen() {
                   <Text style={styles.cardMeta}>
                     Líneas: {doc.summary.counted_lines}/{doc.summary.total_lines} · Dif: {doc.summary.difference_lines}
                   </Text>
-                  <Text style={styles.cardMeta}>Apertura: {formatDateTime(doc.created_at)}</Text>
+                  <Text style={styles.cardMeta}>Apertura: {formatBogotaDateTime(doc.created_at)}</Text>
                   {doc.created_by_user_name ? (
                     <Text style={styles.cardMeta}>Abrió: {doc.created_by_user_name}</Text>
                   ) : null}
-                  {doc.closed_at ? <Text style={styles.cardMeta}>Cierre: {formatDateTime(doc.closed_at)}</Text> : null}
+                  {doc.closed_at ? <Text style={styles.cardMeta}>Cierre: {formatBogotaDateTime(doc.closed_at)}</Text> : null}
                   {doc.closed_by_user_name ? (
                     <Text style={styles.cardMeta}>Cerró: {doc.closed_by_user_name}</Text>
                   ) : null}
-                  {doc.applied_at ? <Text style={styles.cardMeta}>Aplicado: {formatDateTime(doc.applied_at)}</Text> : null}
+                  {doc.applied_at ? <Text style={styles.cardMeta}>Aplicado: {formatBogotaDateTime(doc.applied_at)}</Text> : null}
                   {doc.applied_by_user_name ? (
                     <Text style={styles.cardMeta}>Aplicó: {doc.applied_by_user_name}</Text>
                   ) : null}
                   <Text style={styles.cardMeta}>
-                    Finalizado: {formatDateTime(resolveRecountDocumentSortDate(doc))}
+                    Finalizado: {formatBogotaDateTime(resolveRecountDocumentSortDate(doc))}
                   </Text>
                 </Pressable>
               );
@@ -803,7 +789,7 @@ export function HistoryScreen() {
                   Precio: ${Number(item.price || 0).toLocaleString('es-CO')} · Costo: $
                   {Number(item.cost || 0).toLocaleString('es-CO')}
                 </Text>
-                <Text style={styles.cardMeta}>Creado: {formatDateTime(item.created_at)}</Text>
+                <Text style={styles.cardMeta}>Creado: {formatBogotaDateTime(item.created_at)}</Text>
                 {item.created_by_user_name ? (
                   <Text style={styles.cardMeta}>Usuario: {item.created_by_user_name}</Text>
                 ) : null}

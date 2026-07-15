@@ -15,6 +15,7 @@ import {
 import { useAppSession } from '../contexts/AppSessionContext';
 import { TableFocusSection } from '../ui/TableFocusSection';
 import { SearchInput } from '../ui/SearchInput';
+import { formatBogotaShortDateTime } from '../utils/dateTime';
 import {
   listInventoryProducts,
   type InventoryProductPage,
@@ -71,18 +72,6 @@ function formatMoney(value?: number | null): string {
     currency: 'COP',
     maximumFractionDigits: 0,
   }).format(Number(value ?? 0));
-}
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('es-CO', {
-    timeZone: 'America/Bogota',
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 function displayGroup(product: InventoryProductRow): string {
@@ -733,7 +722,7 @@ function StockCardRow({
       </View>
 
       {product.last_movement_at ? (
-        <Text style={styles.thresholdText}>Último mov.: {formatDate(product.last_movement_at)}</Text>
+        <Text style={styles.thresholdText}>Último mov.: {formatBogotaShortDateTime(product.last_movement_at)}</Text>
       ) : (
         <Text style={styles.thresholdText}>Sin último movimiento registrado</Text>
       )}
@@ -887,7 +876,7 @@ function StockTableRow({
       <View style={styles.tableLastCell}>
         <PeekableText
           label="Último movimiento"
-          value={product.last_movement_at ? formatDate(product.last_movement_at) : '—'}
+          value={product.last_movement_at ? formatBogotaShortDateTime(product.last_movement_at) : '—'}
           style={styles.tableCellText}
           numberOfLines={1}
           onPeekText={onPeekText}

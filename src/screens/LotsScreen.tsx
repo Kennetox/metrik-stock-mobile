@@ -22,6 +22,7 @@ import {
 } from '../services/api/receiving';
 import type { ReceivingLot } from '../types/receiving';
 import { ScreenContainer } from '../ui/ScreenContainer';
+import { formatBogotaDateTime } from '../utils/dateTime';
 
 type SupportDraftFile = {
   uri: string;
@@ -40,20 +41,6 @@ function formatPurchaseType(type: string) {
   if (type === 'cash') return 'Contado';
   if (type === 'invoice') return 'Factura';
   return type;
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return '—';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString('es-CO', {
-    timeZone: 'America/Bogota',
-    hour12: false,
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }) {
@@ -395,7 +382,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
             <Text style={styles.statusRecommendationLabel}>Recomendado ahora</Text>
             <Text style={styles.statusRecommendationTitle}>{primaryLot.lot_number}</Text>
             <Text style={styles.statusRecommendationMeta}>
-              Abierto: {formatDateTime(primaryLot.created_at)}
+              Abierto: {formatBogotaDateTime(primaryLot.created_at)}
               {primaryLot.created_by_user_name ? ` · ${primaryLot.created_by_user_name}` : ''}
             </Text>
             <View style={styles.statusActionRow}>
@@ -459,7 +446,7 @@ export function LotsScreen({ onOpenLot }: { onOpenLot: (lotId: number) => void }
 
             <View style={styles.lotDetails}>
               <Text style={styles.lotMeta}>Tipo: {formatPurchaseType(lot.purchase_type)}</Text>
-              <Text style={styles.lotMeta}>Apertura: {formatDateTime(lot.created_at)}</Text>
+              <Text style={styles.lotMeta}>Apertura: {formatBogotaDateTime(lot.created_at)}</Text>
               {lot.created_by_user_name ? <Text style={styles.lotMeta}>Abrió: {lot.created_by_user_name}</Text> : null}
               {lot.purchase_type === 'invoice' && lot.supplier_name ? (
                 <Text style={styles.lotMeta}>Proveedor: {lot.supplier_name}</Text>
