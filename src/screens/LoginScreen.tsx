@@ -53,7 +53,9 @@ export function LoginScreen() {
   const insets = useSafeAreaInsets();
   const {
     apiClient,
+    bindWithSetupCode,
     loginWithPin,
+    stockDeviceId,
     tabletEmail,
     setTabletEmail,
     stationId,
@@ -68,11 +70,14 @@ export function LoginScreen() {
 
   const [emailInput, setEmailInput] = useState(tabletEmail);
   const [emailStageDone, setEmailStageDone] = useState(Boolean(tabletEmail));
+  const [preferLegacyLogin, setPreferLegacyLogin] = useState(false);
+  const [setupCodeInput, setSetupCodeInput] = useState('');
   const [pin, setPin] = useState('');
   const [showSettings, setShowSettings] = useState(!isInitialSetupComplete);
   const [configError, setConfigError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [validatingEmail, setValidatingEmail] = useState(false);
+  const [bindingDevice, setBindingDevice] = useState(false);
   const PIN_LENGTH = 4;
 
   useEffect(() => {
@@ -90,6 +95,8 @@ export function LoginScreen() {
   }, [tabletEmail]);
 
   const settingsMandatory = useMemo(() => !isInitialSetupComplete, [isInitialSetupComplete]);
+  const hasBoundStockDevice = stockDeviceId.trim().length > 0;
+  const requiresBinding = !hasBoundStockDevice && !emailStageDone && !preferLegacyLogin;
 
   function saveConfiguration() {
     if (!stationId.trim()) {
@@ -106,6 +113,7 @@ export function LoginScreen() {
       setTabletEmail('');
       setEmailInput('');
       setEmailStageDone(false);
+      setPreferLegacyLogin(false);
       setPin('');
     }
     setShowSettings(false);
@@ -136,6 +144,7 @@ export function LoginScreen() {
       setTabletEmail(normalizedEmail);
       setEmailInput(normalizedEmail);
       setEmailStageDone(true);
+      setPreferLegacyLogin(false);
       setPin('');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No fue posible validar correo';
@@ -145,13 +154,39 @@ export function LoginScreen() {
     }
   }
 
+  async function handleBindDevice() {
+    if (settingsMandatory) {
+      setShowSettings(true);
+      ToastAndroid.show('Primero completa la configuración inicial.', ToastAndroid.SHORT);
+      return;
+    }
+    const normalizedCode = setupCodeInput.trim();
+    if (!normalizedCode) {
+      ToastAndroid.show('Ingresa el código de vinculación', ToastAndroid.SHORT);
+      return;
+    }
+    setBindingDevice(true);
+    try {
+      await bindWithSetupCode(normalizedCode);
+      setSetupCodeInput('');
+      setPreferLegacyLogin(false);
+      setPin('');
+      ToastAndroid.show('Tablet vinculada correctamente', ToastAndroid.SHORT);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No fue posible vincular la tablet';
+      ToastAndroid.show(message, ToastAndroid.SHORT);
+    } finally {
+      setBindingDevice(false);
+    }
+  }
+
   async function attemptLogin(nextPin: string) {
     if (submitting || nextPin.length < PIN_LENGTH) {
       return;
     }
     setSubmitting(true);
     try {
-      await loginWithPin(nextPin, emailInput.trim().toLowerCase());
+      await loginWithPin(nextPin, hasBoundStockDevice ? undefined : emailInput.trim().toLowerCase());
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No fue posible iniciar sesión';
       const toastMessage = message.toLowerCase().includes('pin') ? 'Código incorrecto' : message;
@@ -208,9 +243,46 @@ export function LoginScreen() {
               </Pressable>
             </View>
           ) : null}
-          {!emailStageDone ? (
+          {requiresBinding ? (
+            <View style={styles.emailStageWrap}>
+              <Text style={styles.emailStageLabel}>Código de vinculación</Text>
+              <Text style={styles.bindingHelperText}>
+                Genera el código desde Configuración en Metrik y úsalo una sola vez para autorizar esta tablet.
+              </Text>
+              <TextInput
+                value={setupCodeInput}
+                onChangeText={setSetupCodeInput}
+                style={styles.emailInput}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                keyboardType="number-pad"
+                placeholder="123456"
+                placeholderTextColor="#64748B"
+                maxLength={12}
+              />
+              <Pressable
+                style={styles.emailNextButton}
+                onPress={() => {
+                  handleBindDevice().catch(() => undefined);
+                }}
+                disabled={bindingDevice}
+              >
+                {bindingDevice ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.emailNextText}>Vincular tablet</Text>
+                )}
+              </Pressable>
+              <Pressable onPress={() => setPreferLegacyLogin(true)} disabled={bindingDevice}>
+                <Text style={styles.pinChangeEmailText}>Usar correo legado</Text>
+              </Pressable>
+            </View>
+          ) : !hasBoundStockDevice && !emailStageDone ? (
             <View style={styles.emailStageWrap}>
               <Text style={styles.emailStageLabel}>Correo de usuario</Text>
+              <Text style={styles.bindingHelperText}>
+                Modo legado. Solo úsalo si esta tablet todavía no ha sido vinculada con código.
+              </Text>
               <View style={styles.emailInputWrap}>
                 <TextInput
                   value={emailInput}
@@ -241,21 +313,32 @@ export function LoginScreen() {
                   <Text style={styles.emailNextText}>Siguiente</Text>
                 )}
               </Pressable>
+              <Pressable onPress={() => setPreferLegacyLogin(false)} disabled={validatingEmail}>
+                <Text style={styles.pinChangeEmailText}>Usar código de vinculación</Text>
+              </Pressable>
             </View>
           ) : (
             <>
               <View style={styles.pinHeaderRow}>
-                <Text style={styles.pinEmailText} numberOfLines={1} ellipsizeMode="middle">
-                  {emailInput}
-                </Text>
-                <Pressable
-                  onPress={() => {
-                    setEmailStageDone(false);
-                    setPin('');
-                  }}
-                >
-                  <Text style={styles.pinChangeEmailText}>Cambiar</Text>
-                </Pressable>
+                {hasBoundStockDevice ? (
+                  <Text style={styles.pinEmailText} numberOfLines={2}>
+                    {stationLabel || 'Tablet vinculada'}{'\n'}Ingresa tu PIN personal
+                  </Text>
+                ) : (
+                  <>
+                    <Text style={styles.pinEmailText} numberOfLines={1} ellipsizeMode="middle">
+                      {emailInput}
+                    </Text>
+                    <Pressable
+                      onPress={() => {
+                        setEmailStageDone(false);
+                        setPin('');
+                      }}
+                    >
+                      <Text style={styles.pinChangeEmailText}>Cambiar</Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
 
               <View style={styles.pinDotsWrap}>
@@ -339,6 +422,28 @@ export function LoginScreen() {
 
             {configError ? <Text style={styles.configError}>{configError}</Text> : null}
 
+            {!settingsMandatory ? (
+              <>
+                <Text style={styles.label}>Re-vincular con código</Text>
+                <TextInput
+                  value={setupCodeInput}
+                  onChangeText={setSetupCodeInput}
+                  style={styles.configInput}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  placeholder="Ingresa el código generado en Metrik"
+                  placeholderTextColor="#64748B"
+                />
+                <Pressable style={styles.modalSaveButton} onPress={() => void handleBindDevice()} disabled={bindingDevice}>
+                  {bindingDevice ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalSaveText}>Vincular esta tablet</Text>
+                  )}
+                </Pressable>
+              </>
+            ) : null}
+
             {settingsMandatory ? (
               <Pressable style={styles.modalSaveButton} onPress={saveConfiguration}>
                 <Text style={styles.modalSaveText}>Guardar y continuar</Text>
@@ -413,6 +518,11 @@ const styles = StyleSheet.create({
     color: '#1E293B',
     fontSize: 16,
     fontWeight: '700',
+  },
+  bindingHelperText: {
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 18,
   },
   emailInput: {
     flex: 1,

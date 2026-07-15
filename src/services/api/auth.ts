@@ -7,8 +7,8 @@ export type LoginPayload = {
 };
 
 export type TabletLoginPayload = {
-  station_id: string;
   pin: string;
+  stock_device_id?: string;
   email?: string;
   device_id?: string;
   device_label?: string;
@@ -41,6 +41,19 @@ export type TabletEmailCheckResponse = {
   };
 };
 
+export type MobileStockBindPayload = {
+  setup_code: string;
+  device_id?: string;
+  device_label?: string;
+};
+
+export type MobileStockBindResponse = {
+  stock_device_id: string;
+  stock_device_name: string;
+  tenant_id?: number | null;
+  tenant_name?: string | null;
+};
+
 export async function login(
   client: ReturnTypeCreateApiClient,
   payload: LoginPayload,
@@ -54,6 +67,7 @@ export async function tabletLogin(
 ): Promise<LoginResponse> {
   try {
     return await client.post<LoginResponse>('/auth/mobile-stock-login', {
+      stock_device_id: payload.stock_device_id,
       email: payload.email,
       pin: payload.pin,
       device_id: payload.device_id,
@@ -63,6 +77,23 @@ export async function tabletLogin(
     if (error instanceof ApiError && error.status === 404) {
       throw new ApiError(
         'El backend local no expone /auth/mobile-stock-login. Verifica que estés corriendo el proceso correcto de Kensar Backend.',
+        404,
+      );
+    }
+    throw error;
+  }
+}
+
+export async function bindMobileStockDevice(
+  client: ReturnTypeCreateApiClient,
+  payload: MobileStockBindPayload,
+): Promise<MobileStockBindResponse> {
+  try {
+    return await client.post<MobileStockBindResponse>('/auth/mobile-stock-bind', payload);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      throw new ApiError(
+        'El backend local no expone /auth/mobile-stock-bind. Verifica que estés corriendo el proceso correcto de Kensar Backend.',
         404,
       );
     }

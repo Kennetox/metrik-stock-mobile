@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, Platform } from 'react-native';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
-import { tabletLogin } from '../services/api/auth';
+import { bindMobileStockDevice, tabletLogin } from '../services/api/auth';
 import { createApiClient, ApiError } from '../services/api/client';
 import { ensureStockDevice } from '../services/api/stockDevices';
 
@@ -44,6 +44,7 @@ type AppSessionValue = {
   refreshSyncStatus: () => Promise<void>;
   clearDeviceBlockedNotice: () => void;
   loginWithPin: (pin: string, email?: string) => Promise<void>;
+  bindWithSetupCode: (setupCode: string) => Promise<void>;
   logout: () => void;
   apiClient: ReturnType<typeof createApiClient>;
 };
@@ -264,14 +265,18 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
 
   const loginWithPin = useCallback(async (pin: string, email?: string): Promise<void> => {
     const cleanedStation = stationId.trim();
+    const cleanedDeviceName = stationLabel.trim();
     const normalizedEmail = (email ?? tabletEmail).trim().toLowerCase();
-    if (!normalizedEmail) {
+    const normalizedStockDeviceId = stockDeviceId.trim();
+    if (!normalizedStockDeviceId && !normalizedEmail) {
       throw new ApiError('Primero valida un correo de usuario.', 400);
     }
     const payload = await tabletLogin(apiClient, {
-      station_id: cleanedStation || DEFAULT_STATION_ID,
       pin,
-      email: normalizedEmail,
+      stock_device_id: normalizedStockDeviceId || undefined,
+      email: normalizedStockDeviceId ? undefined : normalizedEmail,
+      device_id: cleanedStation || DEFAULT_STATION_ID,
+      device_label: cleanedDeviceName || DEFAULT_STATION_LABEL,
     });
     const authToken = payload.access_token ?? payload.token;
     if (!authToken) {
@@ -285,8 +290,20 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
       },
     );
     setDeviceBlockedReason(null);
-    setTabletEmail(normalizedEmail);
-  }, [apiClient, stationId, tabletEmail]);
+    if (normalizedEmail) {
+      setTabletEmail(normalizedEmail);
+    }
+  }, [apiClient, stationId, stationLabel, stockDeviceId, tabletEmail]);
+
+  const bindWithSetupCode = useCallback(async (setupCode: string): Promise<void> => {
+    const response = await bindMobileStockDevice(apiClient, {
+      setup_code: setupCode.trim(),
+      device_id: stationId.trim() || DEFAULT_STATION_ID,
+      device_label: stationLabel.trim() || DEFAULT_STATION_LABEL,
+    });
+    setStockDeviceId(response.stock_device_id);
+    setDeviceBlockedReason(null);
+  }, [apiClient, stationId, stationLabel]);
 
   const logout = useCallback(() => {
     clearSession();
@@ -435,6 +452,7 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
       refreshSyncStatus,
       clearDeviceBlockedNotice,
       loginWithPin,
+      bindWithSetupCode,
       logout,
       apiClient,
     }),
@@ -460,6 +478,7 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
       refreshSyncStatus,
       clearDeviceBlockedNotice,
       loginWithPin,
+      bindWithSetupCode,
       logout,
     ],
   );
