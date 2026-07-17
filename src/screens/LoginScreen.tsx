@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -79,6 +79,8 @@ export function LoginScreen() {
   const [validatingEmail, setValidatingEmail] = useState(false);
   const [bindingDevice, setBindingDevice] = useState(false);
   const PIN_LENGTH = 4;
+  const SETUP_CODE_LENGTH = 6;
+  const setupCodeInputRef = useRef<TextInput | null>(null);
 
   useEffect(() => {
     if (!isInitialSetupComplete) {
@@ -160,7 +162,7 @@ export function LoginScreen() {
       ToastAndroid.show('Primero completa la configuración inicial.', ToastAndroid.SHORT);
       return;
     }
-    const normalizedCode = setupCodeInput.trim();
+    const normalizedCode = setupCodeInput.replace(/\D/g, '').trim();
     if (!normalizedCode) {
       ToastAndroid.show('Ingresa el código de vinculación', ToastAndroid.SHORT);
       return;
@@ -178,6 +180,10 @@ export function LoginScreen() {
     } finally {
       setBindingDevice(false);
     }
+  }
+
+  function updateSetupCodeInput(value: string) {
+    setSetupCodeInput(value.replace(/\D/g, '').slice(0, SETUP_CODE_LENGTH));
   }
 
   async function attemptLogin(nextPin: string) {
@@ -249,17 +255,47 @@ export function LoginScreen() {
               <Text style={styles.bindingHelperText}>
                 Genera el código desde Configuración en Metrik y úsalo una sola vez para autorizar esta tablet.
               </Text>
-              <TextInput
-                value={setupCodeInput}
-                onChangeText={setSetupCodeInput}
-                style={styles.emailInput}
-                autoCapitalize="characters"
-                autoCorrect={false}
-                keyboardType="number-pad"
-                placeholder="123456"
-                placeholderTextColor="#64748B"
-                maxLength={12}
-              />
+              <Pressable
+                style={styles.setupCodeField}
+                onPress={() => setupCodeInputRef.current?.focus()}
+              >
+                <View style={styles.setupCodeBoxesWrap}>
+                  {Array.from({ length: SETUP_CODE_LENGTH }).map((_, index) => {
+                    const digit = setupCodeInput[index] ?? '';
+                    const hasDigit = digit.length > 0;
+                    return (
+                      <View
+                        key={index}
+                        style={[
+                          styles.setupCodeBox,
+                          hasDigit ? styles.setupCodeBoxFilled : styles.setupCodeBoxEmpty,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.setupCodeBoxText,
+                            hasDigit ? styles.setupCodeBoxTextFilled : styles.setupCodeBoxTextEmpty,
+                          ]}
+                        >
+                          {hasDigit ? digit : '·'}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+                <TextInput
+                  ref={setupCodeInputRef}
+                  value={setupCodeInput}
+                  onChangeText={updateSetupCodeInput}
+                  style={styles.setupCodeHiddenInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="number-pad"
+                  maxLength={SETUP_CODE_LENGTH}
+                  caretHidden
+                  selectionColor="transparent"
+                />
+              </Pressable>
               <Pressable
                 style={styles.emailNextButton}
                 onPress={() => {
@@ -341,16 +377,12 @@ export function LoginScreen() {
                 )}
               </View>
 
-              <View style={styles.pinBoxesWrap}>
+              <View style={styles.pinDotsWrap}>
                 {Array.from({ length: PIN_LENGTH }).map((_, index) => (
                   <View
                     key={index}
-                    style={[styles.pinBox, index < pin.length ? styles.pinBoxFilled : styles.pinBoxEmpty]}
-                  >
-                    <Text style={[styles.pinBoxText, index < pin.length ? styles.pinBoxTextFilled : styles.pinBoxTextEmpty]}>
-                      {pin[index] ?? ''}
-                    </Text>
-                  </View>
+                    style={[styles.pinDot, index < pin.length ? styles.pinDotFilled : styles.pinDotEmpty]}
+                  />
                 ))}
               </View>
 
@@ -528,6 +560,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
+  setupCodeField: {
+    position: 'relative',
+  },
+  setupCodeBoxesWrap: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  setupCodeBox: {
+    flex: 1,
+    height: 58,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  setupCodeBoxFilled: {
+    borderColor: '#69D3A0',
+    backgroundColor: '#F3FFF8',
+  },
+  setupCodeBoxEmpty: {
+    borderColor: '#B7C4D5',
+    backgroundColor: '#FFFFFF',
+  },
+  setupCodeBoxText: {
+    fontSize: 28,
+    lineHeight: 30,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  setupCodeBoxTextFilled: {
+    color: '#0A8F5A',
+  },
+  setupCodeBoxTextEmpty: {
+    color: '#A7B4C7',
+  },
+  setupCodeHiddenInput: {
+    position: 'absolute',
+    inset: 0,
+    opacity: 0.02,
+    color: 'transparent',
+  },
   emailInput: {
     flex: 1,
     backgroundColor: COLORS.inputBg,
@@ -594,48 +669,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  pinBoxesWrap: {
+  pinDotsWrap: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 10,
-    marginBottom: 12,
-    marginTop: 6,
+    gap: 12,
+    marginBottom: 10,
+    marginTop: 4,
   },
-  pinBox: {
-    width: 60,
-    height: 66,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
+  pinDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
   },
-  pinBoxFilled: {
-    backgroundColor: '#F8FFFB',
-    borderColor: '#69D3A0',
-    shadowColor: '#0A8F5A',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: {
-      width: 0,
-      height: 3,
-    },
-    elevation: 1,
+  pinDotFilled: {
+    backgroundColor: COLORS.dotOn,
   },
-  pinBoxEmpty: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#B6C4D8',
-  },
-  pinBoxText: {
-    fontSize: 30,
-    lineHeight: 32,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  pinBoxTextFilled: {
-    color: '#0A8F5A',
-  },
-  pinBoxTextEmpty: {
-    color: '#94A3B8',
+  pinDotEmpty: {
+    backgroundColor: COLORS.dotOff,
+    borderWidth: 1,
+    borderColor: COLORS.dotOffBorder,
   },
   keypad: {
     gap: 10,

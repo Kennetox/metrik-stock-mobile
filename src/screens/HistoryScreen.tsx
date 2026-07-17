@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { useAppSession } from '../contexts/AppSessionContext';
+import { getRestockForecast, type KoraRestockForecastResponse } from '../services/api/kora';
 import { getRecountDetail, listRecounts } from '../services/api/recounts';
 import { getLotDetail, listReceivingCreatedProducts, listReceivingDocuments } from '../services/api/receiving';
 import type { RecountDetail, RecountRecord } from '../types/recounts';
@@ -124,6 +125,18 @@ function resolveRecountFinishedBy(doc: RecountRecord): string | null {
   return doc.applied_by_user_name || doc.closed_by_user_name || null;
 }
 
+function formatRestockUrgency(value: 'high' | 'medium' | 'low') {
+  if (value === 'high') return 'Alta';
+  if (value === 'medium') return 'Media';
+  return 'Baja';
+}
+
+function formatCoverageDays(value?: number | null): string {
+  if (value == null) return '—';
+  if (value < 1) return '< 1 día';
+  return `${Math.round(value)} días`;
+}
+
 export function HistoryScreen() {
   const { apiBase, apiClient, stockDeviceId } = useAppSession();
   const [tab, setTab] = useState<'documents' | 'products'>('documents');
@@ -143,6 +156,10 @@ export function HistoryScreen() {
   const [loadingSelectedRecountDetail, setLoadingSelectedRecountDetail] = useState(false);
   const [selectedRecountDetailError, setSelectedRecountDetailError] = useState<string | null>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
+  const [restockModalVisible, setRestockModalVisible] = useState(false);
+  const [restockLoading, setRestockLoading] = useState(false);
+  const [restockError, setRestockError] = useState<string | null>(null);
+  const [restockReport, setRestockReport] = useState<KoraRestockForecastResponse | null>(null);
 
   const computeDateRange = useCallback(() => {
     const endYmd = getBogotaYmd(new Date());
@@ -420,6 +437,25 @@ export function HistoryScreen() {
     };
   }, [load]);
 
+  const openRestockReport = useCallback(async () => {
+    setRestockModalVisible(true);
+    setRestockLoading(true);
+    setRestockError(null);
+    try {
+      const report = await getRestockForecast(apiClient, {
+        mode: 'today',
+        horizon_days: 2,
+        lookback_days: 30,
+      });
+      setRestockReport(report);
+    } catch (err) {
+      setRestockReport(null);
+      setRestockError(err instanceof Error ? err.message : 'No se pudo cargar el reporte');
+    } finally {
+      setRestockLoading(false);
+    }
+  }, [apiClient]);
+
   return (
     <ScreenContainer backgroundColor="#E9EDF3" scrollEnabled={false}>
       {selectedDoc || selectedRecount ? (
@@ -663,6 +699,18 @@ export function HistoryScreen() {
                     </Text>
                   </Pressable>
                 </View>
+                <View style={styles.koraQuickCard}>
+                  <View style={styles.koraQuickTextWrap}>
+                    <Text style={styles.koraQuickEyebrow}>KORA rápida</Text>
+                    <Text style={styles.koraQuickTitle}>Productos para mañana</Text>
+                    <Text style={styles.koraQuickSubtitle}>
+                      Revisa los productos vendidos hoy que ya conviene reponer mañana.
+                    </Text>
+                  </View>
+                  <Pressable style={styles.koraQuickButton} onPress={() => void openRestockReport()}>
+                    <Text style={styles.koraQuickButtonText}>Ver reporte</Text>
+                  </Pressable>
+                </View>
               </View>
 
               {loading ? <ActivityIndicator color="#0A8F5A" /> : null}
@@ -796,6 +844,116 @@ export function HistoryScreen() {
               </View>
             ))}
           </ScrollView>
+          <Modal
+            visible={restockModalVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setRestockModalVisible(false)}
+          >
+            <View style={styles.previewBackdrop}>
+              <View style={styles.restockModalCard}>
+                <View style={styles.restockModalHeader}>
+                  <View style={styles.restockModalHeaderText}>
+                    <Text style={styles.restockModalEyebrow}>KORA rápida</Text>
+                    <Text style={styles.restockModalTitle}>
+                      Productos vendidos hoy que conviene reponer mañana
+                    </Text>
+                  </View>
+                  <View style={styles.restockModalActions}>
+                    <Pressable
+                      style={styles.restockSecondaryButton}
+                      onPress={() => void openRestockReport()}
+                      disabled={restockLoading}
+                    >
+                      <Text style={styles.restockSecondaryText}>
+                        {restockLoading ? 'Cargando...' : 'Refrescar'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.restockPrimaryButton}
+                      onPress={() => setRestockModalVisible(false)}
+                    >
+                      <Text style={styles.restockPrimaryText}>Cerrar</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                {restockLoading ? (
+                  <View style={styles.restockLoadingWrap}>
+                    <ActivityIndicator color="#0A8F5A" size="large" />
+                    <Text style={styles.restockLoadingText}>Cargando reporte...</Text>
+                  </View>
+                ) : restockError ? (
+                  <View style={styles.restockErrorBox}>
+                    <Text style={styles.restockErrorTitle}>No se pudo abrir el reporte.</Text>
+                    <Text style={styles.restockErrorText}>{restockError}</Text>
+                  </View>
+                ) : restockReport ? (
+                  <ScrollView style={styles.restockScroll} contentContainerStyle={styles.restockScrollContent}>
+                    <View style={styles.restockHeroCard}>
+                      <Text style={styles.restockHeroTitle}>Reporte operativo de reposición</Text>
+                      <Text style={styles.restockHeroSummary}>
+                        {restockReport.headline || 'Productos vendidos hoy que conviene reponer mañana.'}
+                      </Text>
+                      <Text style={styles.restockHeroMeta}>
+                        Generado: {formatBogotaDateTime(restockReport.generated_at)}
+                      </Text>
+                      <Text style={styles.restockHeroMeta}>
+                        Lista: {restockReport.items.length} producto{restockReport.items.length === 1 ? '' : 's'}
+                      </Text>
+                    </View>
+
+                    {restockReport.summary_lines?.length ? (
+                      <View style={styles.restockSummaryBox}>
+                        {restockReport.summary_lines.slice(0, 3).map((line, index) => (
+                          <Text key={`restock-line-${index}`} style={styles.restockSummaryLine}>
+                            {line}
+                          </Text>
+                        ))}
+                      </View>
+                    ) : null}
+
+                    {restockReport.items.length === 0 ? (
+                      <Text style={styles.empty}>Hoy no hay productos que ameriten reposición para mañana.</Text>
+                    ) : (
+                      restockReport.items.map((item) => (
+                        <View key={item.product_id} style={styles.restockItemCard}>
+                          <View style={styles.cardHeadRow}>
+                            <Text style={styles.cardTitle} numberOfLines={2}>
+                              {item.product_name}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.restockUrgencyBadge,
+                                item.urgency === 'high'
+                                  ? styles.restockUrgencyHigh
+                                  : item.urgency === 'medium'
+                                    ? styles.restockUrgencyMedium
+                                    : styles.restockUrgencyLow,
+                              ]}
+                            >
+                              {formatRestockUrgency(item.urgency)}
+                            </Text>
+                          </View>
+                          <Text style={styles.cardMeta}>SKU: {item.sku?.trim() || 'N/A'}</Text>
+                          <Text style={styles.cardMeta}>
+                            Stock: {formatQty(item.qty_on_hand)} · Hoy: {formatQty(item.units_today)} · Sugerido:{' '}
+                            {formatQty(item.suggested_qty)}
+                          </Text>
+                          <Text style={styles.cardMeta}>
+                            Cobertura: {formatCoverageDays(item.coverage_days)} · Precio: $
+                            {Number(item.price || 0).toLocaleString('es-CO')}
+                          </Text>
+                        </View>
+                      ))
+                    )}
+                  </ScrollView>
+                ) : (
+                  <Text style={styles.empty}>No hay reporte para mostrar.</Text>
+                )}
+              </View>
+            </View>
+          </Modal>
         </>
       )}
     </ScreenContainer>
@@ -867,6 +1025,48 @@ const styles = StyleSheet.create({
   },
   tabBtnTextActive: {
     color: '#0A8F5A',
+  },
+  koraQuickCard: {
+    backgroundColor: '#F7FBF8',
+    borderWidth: 1,
+    borderColor: '#BDE3CA',
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+  },
+  koraQuickTextWrap: {
+    gap: 3,
+  },
+  koraQuickEyebrow: {
+    color: '#0A8F5A',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  koraQuickTitle: {
+    color: '#0F172A',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  koraQuickSubtitle: {
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  koraQuickButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#149B66',
+    backgroundColor: '#0A8F5A',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  koraQuickButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13,
   },
   list: {
     gap: 10,
@@ -1112,5 +1312,170 @@ const styles = StyleSheet.create({
     color: '#F8FAFC',
     fontWeight: '700',
     fontSize: 12,
+  },
+  restockModalCard: {
+    flex: 1,
+    marginVertical: 18,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 18,
+    padding: 12,
+    gap: 10,
+  },
+  restockModalHeader: {
+    gap: 10,
+  },
+  restockModalHeaderText: {
+    gap: 4,
+  },
+  restockModalEyebrow: {
+    color: '#0A8F5A',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  restockModalTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+    lineHeight: 24,
+  },
+  restockModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  restockSecondaryButton: {
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  restockSecondaryText: {
+    color: '#1D4ED8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  restockPrimaryButton: {
+    borderWidth: 1,
+    borderColor: '#B7C4D5',
+    backgroundColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  restockPrimaryText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  restockLoadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 24,
+  },
+  restockLoadingText: {
+    color: '#475569',
+    fontSize: 13,
+  },
+  restockErrorBox: {
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEE2E2',
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  restockErrorTitle: {
+    color: '#991B1B',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  restockErrorText: {
+    color: '#7F1D1D',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  restockScroll: {
+    flex: 1,
+  },
+  restockScrollContent: {
+    gap: 10,
+    paddingBottom: 12,
+  },
+  restockHeroCard: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 14,
+    padding: 12,
+    gap: 4,
+  },
+  restockHeroTitle: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  restockHeroSummary: {
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  restockHeroMeta: {
+    color: '#475569',
+    fontSize: 12,
+  },
+  restockSummaryBox: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D8DFEA',
+    borderRadius: 12,
+    padding: 12,
+    gap: 6,
+  },
+  restockSummaryLine: {
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  restockItemCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    padding: 12,
+    gap: 3,
+  },
+  restockUrgencyBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    fontSize: 12,
+    fontWeight: '800',
+    overflow: 'hidden',
+  },
+  restockUrgencyHigh: {
+    backgroundColor: '#FEE2E2',
+    color: '#B91C1C',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  restockUrgencyMedium: {
+    backgroundColor: '#FEF3C7',
+    color: '#B45309',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+  },
+  restockUrgencyLow: {
+    backgroundColor: '#DCFCE7',
+    color: '#166534',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
   },
 });
