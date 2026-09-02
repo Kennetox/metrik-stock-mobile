@@ -42,6 +42,8 @@ export type RecountLine = {
   sku?: string | null;
   barcode?: string | null;
   group_name?: string | null;
+  price?: number | null;
+  last_movement_at?: string | null;
   system_qty: number;
   counted_qty?: number | null;
   diff_qty?: number | null;

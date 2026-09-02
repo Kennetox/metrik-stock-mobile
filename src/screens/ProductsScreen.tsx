@@ -27,11 +27,10 @@ import {
   type Product,
   type ProductCostSuggestionResponse,
   type ProductDuplicateCandidate,
-  type ProductGroup,
   type ProductUpsertPayload,
   updateProduct,
 } from '../services/api/products';
-import { getReceivingNextProductCodes } from '../services/api/receiving';
+import { getReceivingNextProductCodes, listReceivingProductGroups } from '../services/api/receiving';
 
 type ActiveFilter = 'all' | 'active' | 'inactive';
 type SortOption = 'recent' | 'name' | 'sku' | 'price_asc' | 'price_desc';
@@ -40,6 +39,11 @@ type CostMode = 'balanced' | 'conservative' | 'aggressive';
 type ViewMode = 'table' | 'cards';
 type PickerKind = 'group' | 'brand' | 'supplier';
 type PickerContext = 'filter' | 'form';
+type ProductGroupOption = {
+  path: string;
+  display_name: string;
+  parent_path?: string | null;
+};
 
 const PAGE_LIMIT = 5000;
 
@@ -94,13 +98,13 @@ function formatMoney(value?: number | null): string {
   });
 }
 
-function parseNumberInput(value: string): number {
+export function parseNumberInput(value: string): number {
   const normalized = value.replace(/\./g, '').replace(',', '.').trim();
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function formatMoneyInput(value?: number | null): string {
+export function formatMoneyInput(value?: number | null): string {
   if (value == null || Number.isNaN(value)) return '';
   return new Intl.NumberFormat('es-CO', {
     minimumFractionDigits: 0,
@@ -117,13 +121,13 @@ function formatIntegerInput(value?: number | null): string {
 }
 
 function unformatNumericInput(value: string): string {
-  return value.replace(/\./g, '').replace(',', '.').trim();
+  return value.replace(/\./g, '').trim();
 }
 
 function formatNumericText(value: string, allowDecimals: boolean): string {
   const normalized = unformatNumericInput(value);
   if (!normalized) return '';
-  const parsed = Number(normalized);
+  const parsed = Number(normalized.replace(',', '.'));
   if (!Number.isFinite(parsed)) return '';
   return new Intl.NumberFormat('es-CO', {
     minimumFractionDigits: 0,
@@ -131,8 +135,11 @@ function formatNumericText(value: string, allowDecimals: boolean): string {
   }).format(parsed);
 }
 
-function formatMoneyTyping(value: string): string {
-  return formatNumericText(value, true);
+export function sanitizeDecimalInput(value: string): string {
+  const normalized = value.replace('.', ',').replace(/[^\d,]/g, '');
+  const [integerPart = '', ...decimalParts] = normalized.split(',');
+  if (decimalParts.length === 0) return integerPart;
+  return `${integerPart},${decimalParts.join('').slice(0, 2)}`;
 }
 
 function normalizeText(value: string): string {
@@ -207,7 +214,7 @@ export function ProductsScreen() {
   const { width } = useWindowDimensions();
   const { apiClient, syncStatus } = useAppSession();
   const [products, setProducts] = useState<Product[]>([]);
-  const [groups, setGroups] = useState<ProductGroup[]>([]);
+  const [groups, setGroups] = useState<ProductGroupOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -289,7 +296,9 @@ export function ProductsScreen() {
     try {
       const [productRows, groupRows] = await Promise.all([
         listProducts(apiClient, { skip: 0, limit: PAGE_LIMIT }),
-        listProductGroups(apiClient, { skip: 0, limit: 5000 }),
+        listReceivingProductGroups(apiClient, { skip: 0, limit: 5000 }).catch(() =>
+          listProductGroups(apiClient, { skip: 0, limit: 5000 }),
+        ),
       ]);
       setProducts(productRows);
       setGroups(groupRows);
@@ -364,12 +373,15 @@ export function ProductsScreen() {
 
   const groupSelectOptions = useMemo(() => {
     return [...groups]
-      .sort((left, right) => left.display_name.localeCompare(right.display_name))
-      .map((group) => ({
-        value: group.path,
-        label: group.display_name,
-        subtitle: group.path,
-      }));
+      .sort((left, right) => left.path.localeCompare(right.path, 'es', { sensitivity: 'base' }))
+      .map((group) => {
+        const depth = Math.max(0, group.path.split('/').length - 1);
+        return {
+          value: group.path,
+          label: depth > 0 ? `${'  '.repeat(depth)}↳ ${group.display_name}` : group.display_name,
+          subtitle: group.parent_path ? `Subgrupo de ${group.parent_path} · ${group.path}` : `Grupo principal · ${group.path}`,
+        };
+      });
   }, [groups]);
 
   const brandSelectOptions = useMemo(() => {
@@ -397,7 +409,11 @@ export function ProductsScreen() {
   const formGroupLabel = useMemo(() => {
     const value = form.group_name.trim();
     if (!value) return 'Seleccionar grupo';
-    return groups.find((group) => group.path === value)?.display_name || value;
+    const selectedGroup = groups.find((group) => group.path === value);
+    if (!selectedGroup) return value;
+    return selectedGroup.parent_path
+      ? `${selectedGroup.display_name} · ${selectedGroup.path}`
+      : selectedGroup.display_name;
   }, [form.group_name, groups]);
   const formBrandLabel = useMemo(() => {
     const value = form.brand.trim();
@@ -515,7 +531,7 @@ export function ProductsScreen() {
       setCostSuggestion(response);
       setForm((prev) => ({
         ...prev,
-        cost: String(Math.round(response.suggested_cost * 100) / 100),
+        cost: formatMoneyInput(response.suggested_cost),
       }));
     } catch (err) {
       setFormMessage(err instanceof Error ? err.message : 'No se pudo sugerir costo');
@@ -1277,7 +1293,7 @@ export function ProductsScreen() {
                       <Text style={styles.fieldLabel}>Precio</Text>
                       <TextInput
                         value={form.price}
-                        onChangeText={(value) => updateForm('price', formatMoneyTyping(value))}
+                        onChangeText={(value) => updateForm('price', sanitizeDecimalInput(value))}
                         onFocus={() => updateForm('price', unformatNumericInput(form.price))}
                         onBlur={() => updateForm('price', formatNumericText(form.price, true))}
                         style={styles.fieldInput}
@@ -1288,7 +1304,7 @@ export function ProductsScreen() {
                       <Text style={styles.fieldLabel}>Costo</Text>
                       <TextInput
                         value={form.cost}
-                        onChangeText={(value) => updateForm('cost', formatMoneyTyping(value))}
+                        onChangeText={(value) => updateForm('cost', sanitizeDecimalInput(value))}
                         onFocus={() => updateForm('cost', unformatNumericInput(form.cost))}
                         onBlur={() => updateForm('cost', formatNumericText(form.cost, true))}
                         style={styles.fieldInput}

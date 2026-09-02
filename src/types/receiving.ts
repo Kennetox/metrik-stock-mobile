@@ -125,6 +125,7 @@ export type ReceivingProductLookup = {
   name: string;
   price: number;
   cost: number;
+  last_movement_at?: string | null;
   label_format?: string | null;
   active?: boolean | null;
   is_active?: boolean | null;

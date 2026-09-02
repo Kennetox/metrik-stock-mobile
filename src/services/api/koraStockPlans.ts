@@ -29,7 +29,7 @@ export async function convertKoraStockPlan(
     `/kora/stock-sanitization-plans/${planId}/convert`,
     {
       stock_device_id: stockDeviceId,
-      count_mode: 'blind',
+      count_mode: 'visible',
     },
   );
 }

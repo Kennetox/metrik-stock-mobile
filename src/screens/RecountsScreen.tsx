@@ -52,6 +52,8 @@ type ManualResultRow = {
   sku?: string | null;
   barcode?: string | null;
   group_name?: string | null;
+  price?: number | null;
+  last_movement_at?: string | null;
   counted_qty?: number | null;
 };
 
@@ -148,7 +150,7 @@ export function RecountsScreen({
   const [groupSearch, setGroupSearch] = useState('');
   const [groupOptions, setGroupOptions] = useState<ProductGroupOption[]>([]);
   const [loadingGroupOptions, setLoadingGroupOptions] = useState(false);
-  const [newMode, setNewMode] = useState<'blind' | 'visible'>('blind');
+  const [newMode, setNewMode] = useState<'blind' | 'visible'>('visible');
   const [actionLoading, setActionLoading] = useState<'close' | 'apply' | null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -438,6 +440,8 @@ export function RecountsScreen({
                 barcode: product.barcode,
                 counted_qty: countedByProductId.get(product.id) ?? null,
                 group_name: null,
+                price: product.price,
+                last_movement_at: product.last_movement_at,
               }));
             })
           : getRecountDetail(apiClient, selectedId, {
@@ -452,6 +456,8 @@ export function RecountsScreen({
                 sku: line.sku,
                 barcode: line.barcode,
                 group_name: line.group_name,
+                price: line.price,
+                last_movement_at: line.last_movement_at,
                 counted_qty: line.counted_qty,
               })),
             );
@@ -666,7 +672,7 @@ export function RecountsScreen({
       setNewScopeValue('');
       setGroupLabel('');
       setGroupSearch('');
-      setNewMode('blind');
+      setNewMode('visible');
       setShowCreateRecountModal(false);
       await loadDocs();
       setSelectedId(created.id);
@@ -848,6 +854,10 @@ export function RecountsScreen({
     setSelectedDocForActions(null);
   }
 
+  function hideFinishedKoraPlan(recountId: number) {
+    setKoraPlan((current) => (current?.converted_recount_id === recountId ? null : current));
+  }
+
   async function handleCloseRecountFromList() {
     if (!ensureCanMutate()) return;
     if (!selectedDocForActions) return;
@@ -876,12 +886,14 @@ export function RecountsScreen({
         style: 'destructive',
         onPress: async () => {
           if (!selectedDocForActions) return;
+          const recountId = selectedDocForActions.id;
           setListActionLoading('apply');
           setError(null);
           try {
-            await applyRecount(apiClient, selectedDocForActions.id);
+            await applyRecount(apiClient, recountId);
+            hideFinishedKoraPlan(recountId);
             forceCloseDocActions();
-            await loadDocs();
+            await Promise.all([loadDocs(), loadKoraPlan({ silent: true })]);
           } catch (err) {
             setError(err instanceof Error ? err.message : 'No se pudo aplicar recuento');
           } finally {
@@ -903,12 +915,14 @@ export function RecountsScreen({
         style: 'destructive',
         onPress: async () => {
           if (!selectedDocForActions) return;
+          const recountId = selectedDocForActions.id;
           setListActionLoading('cancel');
           setError(null);
           try {
-            await cancelRecount(apiClient, selectedDocForActions.id);
+            await cancelRecount(apiClient, recountId);
+            hideFinishedKoraPlan(recountId);
             forceCloseDocActions();
-            await loadDocs();
+            await Promise.all([loadDocs(), loadKoraPlan({ silent: true })]);
           } catch (err) {
             setError(err instanceof Error ? err.message : 'No se pudo cancelar recuento');
           } finally {
@@ -931,12 +945,13 @@ export function RecountsScreen({
           text: 'Aplicar',
           style: 'destructive',
           onPress: async () => {
+            const recountId = selectedId;
             setActionLoading('apply');
             setError(null);
             try {
-              await applyRecount(apiClient, selectedId);
-              await loadDetail();
-              await loadDocs();
+              await applyRecount(apiClient, recountId);
+              hideFinishedKoraPlan(recountId);
+              await Promise.all([loadDetail(), loadDocs(), loadKoraPlan({ silent: true })]);
             } catch (err) {
               setError(err instanceof Error ? err.message : 'No se pudo aplicar recuento');
             } finally {
@@ -969,7 +984,7 @@ export function RecountsScreen({
     setNewScopeValue('');
     setGroupLabel('');
     setGroupSearch('');
-    setNewMode('blind');
+    setNewMode('visible');
     setShowCreateRecountModal(true);
     if (groupOptions.length > 0) {
       setLoadingGroupOptions(false);
@@ -1577,7 +1592,9 @@ export function RecountsScreen({
                     {line.product_name}
                   </Text>
                   <Text style={styles.resultMeta}>
-                    SKU: {line.sku || 'N/A'} · Código de barras: {line.barcode || 'N/A'}
+                    SKU: {line.sku || 'N/A'} · Código de barras: {line.barcode || 'N/A'} · Precio:{' '}
+                    {line.price == null ? 'N/A' : formatCop(line.price)} · Último mov.:{' '}
+                    {line.last_movement_at ? formatBogotaDateTime(line.last_movement_at) : 'Sin movimientos'}
                   </Text>
                 </Pressable>
               );
