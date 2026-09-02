@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Keyboard,
   Modal,
   Pressable,
@@ -25,6 +26,7 @@ import {
   listRecounts,
   upsertRecountLine,
 } from '../services/api/recounts';
+import { convertKoraStockPlan, getCurrentKoraStockPlan, retrieveKoraStockPlan } from '../services/api/koraStockPlans';
 import {
   filterActiveReceivingProducts,
   listReceivingProductGroups,
@@ -32,7 +34,9 @@ import {
   searchReceivingProducts,
 } from '../services/api/receiving';
 import type { RecountDetail, RecountLine, RecountRecord, RecountStatus } from '../types/recounts';
+import type { KoraStockPlan } from '../types/koraStockPlans';
 import { ScreenContainer } from '../ui/ScreenContainer';
+import { formatBogotaDateTime } from '../utils/dateTime';
 
 type ProductGroupOption = {
   id: number;
@@ -51,10 +55,19 @@ type ManualResultRow = {
   counted_qty?: number | null;
 };
 
+const QTY_FORMATTER = new Intl.NumberFormat('es-CO', {
+  maximumFractionDigits: 2,
+});
+const COP_FORMATTER = new Intl.NumberFormat('es-CO', {
+  maximumFractionDigits: 0,
+});
+
 function formatQty(value: number) {
-  return new Intl.NumberFormat('es-CO', {
-    maximumFractionDigits: 2,
-  }).format(Number(value || 0));
+  return QTY_FORMATTER.format(Number(value || 0));
+}
+
+function formatCop(value: number) {
+  return `$ ${COP_FORMATTER.format(Math.abs(value || 0))}`;
 }
 
 function statusLabel(status: RecountStatus) {
@@ -98,10 +111,7 @@ function findLineByCode(lines: RecountLine[], rawCode: string): RecountLine | nu
   for (const line of lines) {
     const barcode = normalizeBarcode(line.barcode);
     const barcodeNoZeros = barcode.replace(/^0+/, '');
-    if (
-      barcode === scannedRaw ||
-      barcodeNoZeros === scannedWithoutLeadingZeros
-    ) {
+    if (barcode === scannedRaw || barcodeNoZeros === scannedWithoutLeadingZeros) {
       return line;
     }
   }
@@ -109,9 +119,11 @@ function findLineByCode(lines: RecountLine[], rawCode: string): RecountLine | nu
 }
 
 export function RecountsScreen({
+  isActive = true,
   onWorkspaceChange,
   backSignal = 0,
 }: {
+  isActive?: boolean;
   onWorkspaceChange?: (open: boolean) => void;
   backSignal?: number;
 }) {
@@ -169,12 +181,16 @@ export function RecountsScreen({
   const [listActionLoading, setListActionLoading] = useState<'close' | 'apply' | 'cancel' | null>(null);
   const [showCreateRecountModal, setShowCreateRecountModal] = useState(false);
   const [createRecountError, setCreateRecountError] = useState<string | null>(null);
+  const [koraPlan, setKoraPlan] = useState<KoraStockPlan | null>(null);
+  const [loadingKoraPlan, setLoadingKoraPlan] = useState(true);
+  const [koraPlanError, setKoraPlanError] = useState<string | null>(null);
+  const [koraPlanAction, setKoraPlanAction] = useState<'retrieve' | 'convert' | null>(null);
   const canMutate = syncStatus === 'online' || syncStatus === 'degraded';
 
   const scannerCooldownRef = useRef(0);
   const bluetoothInputRef = useRef<TextInput | null>(null);
   const manualQueryInputRef = useRef<TextInput | null>(null);
-  const listScrollRef = useRef<ScrollView | null>(null);
+  const listScrollRef = useRef<FlatList<RecountLine> | null>(null);
   const prevCountedLinesRef = useRef(0);
   const autoFollowRef = useRef(true);
   const autoScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -191,102 +207,144 @@ export function RecountsScreen({
     return false;
   }
 
-  const loadDocs = useCallback(async (options?: { silent?: boolean }) => {
-    const silent = options?.silent ?? false;
-    if (docsRefreshInFlightRef.current) {
-      return;
-    }
-    if (silent && Date.now() - lastDocsRefreshAtRef.current < 20000) {
-      return;
-    }
-    docsRefreshInFlightRef.current = true;
-    if (!silent) {
-      setError(null);
-      setLoadingDocs(true);
-    }
-    try {
-      const page = await listRecounts(apiClient, { source: 'app', skip: 0, limit: 50 });
-      const filtered = page.items.filter((doc) => belongsToStockDevice(stockDeviceId, doc.stock_device_id));
-      setDocs(filtered);
-      setSelectedId((prev) => {
-        if (filtered.length === 0) return null;
-        if (prev != null && filtered.some((doc) => doc.id === prev)) return prev;
-        return filtered[0].id;
-      });
-    } catch (err) {
-      if (!silent) {
-        setError(err instanceof Error ? err.message : 'No se pudieron cargar recuentos');
-        setDocs([]);
+  const loadDocs = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
+      if (docsRefreshInFlightRef.current) {
+        return;
       }
-    } finally {
-      if (!silent) {
-        setLoadingDocs(false);
+      if (silent && Date.now() - lastDocsRefreshAtRef.current < 20000) {
+        return;
       }
-      lastDocsRefreshAtRef.current = Date.now();
-      docsRefreshInFlightRef.current = false;
-    }
-  }, [apiClient, stockDeviceId]);
-
-  const loadDetail = useCallback(async (options?: { silent?: boolean }) => {
-    const silent = options?.silent ?? false;
-    if (!selectedId) {
-      setDetail(null);
-      return;
-    }
-    if (detailRefreshInFlightRef.current) {
-      return;
-    }
-    if (silent && Date.now() - lastDetailRefreshAtRef.current < 20000) {
-      return;
-    }
-    detailRefreshInFlightRef.current = true;
-    if (!silent) {
-      setLoadingDetail(true);
-      setError(null);
-    }
-    try {
-      const data = await getRecountDetail(apiClient, selectedId, {
-        counted_only: true,
-        skip: 0,
-        limit: 600,
-      });
-      setDetail(data);
-      setLineDraft((prev) => {
-        const next = { ...prev };
-        for (const line of data.lines) {
-          if (!(line.product_id in next)) {
-            next[line.product_id] = line.counted_qty != null ? String(line.counted_qty) : '';
-          }
+      docsRefreshInFlightRef.current = true;
+      if (!silent) {
+        setError(null);
+        setLoadingDocs(true);
+      }
+      try {
+        const page = await listRecounts(apiClient, {
+          source: 'app',
+          skip: 0,
+          limit: 50,
+        });
+        const filtered = page.items.filter((doc) => belongsToStockDevice(stockDeviceId, doc.stock_device_id));
+        setDocs(filtered);
+        setSelectedId((prev) => {
+          if (filtered.length === 0) return null;
+          if (prev != null && filtered.some((doc) => doc.id === prev)) return prev;
+          return filtered[0].id;
+        });
+      } catch (err) {
+        if (!silent) {
+          setError(err instanceof Error ? err.message : 'No se pudieron cargar recuentos');
+          setDocs([]);
         }
-        return next;
-      });
-    } catch (err) {
+      } finally {
+        if (!silent) {
+          setLoadingDocs(false);
+        }
+        lastDocsRefreshAtRef.current = Date.now();
+        docsRefreshInFlightRef.current = false;
+      }
+    },
+    [apiClient, stockDeviceId],
+  );
+
+  const loadKoraPlan = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
       if (!silent) {
-        setError(err instanceof Error ? err.message : 'No se pudo cargar detalle de recuento');
+        setLoadingKoraPlan(true);
+        setKoraPlanError(null);
+      }
+      try {
+        const response = await getCurrentKoraStockPlan(apiClient);
+        setKoraPlan(response.plan ?? null);
+      } catch (err) {
+        if (!silent) {
+          setKoraPlanError(err instanceof Error ? err.message : 'No se pudo consultar el plan de Kora.');
+        }
+      } finally {
+        if (!silent) {
+          setLoadingKoraPlan(false);
+        }
+      }
+    },
+    [apiClient],
+  );
+
+  const loadDetail = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
+      if (!selectedId) {
         setDetail(null);
+        return;
       }
-    } finally {
+      if (detailRefreshInFlightRef.current) {
+        return;
+      }
+      if (silent && Date.now() - lastDetailRefreshAtRef.current < 20000) {
+        return;
+      }
+      detailRefreshInFlightRef.current = true;
       if (!silent) {
-        setLoadingDetail(false);
+        setLoadingDetail(true);
+        setError(null);
       }
-      lastDetailRefreshAtRef.current = Date.now();
-      detailRefreshInFlightRef.current = false;
-    }
-  }, [apiClient, selectedId]);
+      try {
+        const selectedDoc = docs.find((doc) => doc.id === selectedId);
+        const data = await getRecountDetail(apiClient, selectedId, {
+          counted_only: selectedDoc?.scope_type !== 'free',
+          skip: 0,
+          limit: 600,
+        });
+        setDetail(data);
+        setLineDraft((prev) => {
+          const next = { ...prev };
+          for (const line of data.lines) {
+            if (!(line.product_id in next)) {
+              next[line.product_id] = line.counted_qty != null ? String(line.counted_qty) : '';
+            }
+          }
+          return next;
+        });
+      } catch (err) {
+        if (!silent) {
+          setError(err instanceof Error ? err.message : 'No se pudo cargar detalle de recuento');
+          setDetail(null);
+        }
+      } finally {
+        if (!silent) {
+          setLoadingDetail(false);
+        }
+        lastDetailRefreshAtRef.current = Date.now();
+        detailRefreshInFlightRef.current = false;
+      }
+    },
+    [apiClient, docs, selectedId],
+  );
 
   useEffect(() => {
+    if (!isActive) return;
     loadDocs().catch(() => undefined);
-  }, [loadDocs]);
+  }, [isActive, loadDocs]);
 
   useEffect(() => {
+    if (!isActive) return;
+    loadKoraPlan().catch(() => undefined);
+  }, [isActive, loadKoraPlan]);
+
+  useEffect(() => {
+    if (!isActive) return;
     const timer = setInterval(() => {
       loadDocs({ silent: true }).catch(() => undefined);
+      loadKoraPlan({ silent: true }).catch(() => undefined);
       if (workspaceOpen) {
         loadDetail({ silent: true }).catch(() => undefined);
       }
     }, 30000);
     return () => clearInterval(timer);
-  }, [loadDocs, loadDetail, workspaceOpen]);
+  }, [isActive, loadDocs, loadDetail, loadKoraPlan, workspaceOpen]);
 
   useEffect(() => {
     if (docs.length === 0) {
@@ -308,20 +366,20 @@ export function RecountsScreen({
   }, [loadDetail, workspaceOpen]);
 
   useEffect(() => {
-    if (!workspaceOpen || scannerOpen || manualAddOpen) return;
+    if (!isActive || !workspaceOpen || scannerOpen || manualAddOpen) return;
     const timer = setTimeout(() => {
       bluetoothInputRef.current?.focus();
     }, 120);
     return () => clearTimeout(timer);
-  }, [workspaceOpen, scannerOpen, manualAddOpen, selectedId]);
+  }, [isActive, workspaceOpen, scannerOpen, manualAddOpen, selectedId]);
 
   useEffect(() => {
-    if (!workspaceOpen || !manualAddOpen) return;
+    if (!isActive || !workspaceOpen || !manualAddOpen) return;
     const timer = setTimeout(() => {
       manualQueryInputRef.current?.focus();
     }, 120);
     return () => clearTimeout(timer);
-  }, [workspaceOpen, manualAddOpen]);
+  }, [isActive, workspaceOpen, manualAddOpen]);
 
   useEffect(() => {
     if (workspaceOpen) {
@@ -361,8 +419,9 @@ export function RecountsScreen({
     const timer = setTimeout(() => {
       setManualLoading(true);
       const scopeType = detail?.recount.scope_type;
+      const isKoraGuided = detail?.recount.title?.startsWith('Kora ·') ?? false;
       const requestPromise =
-        scopeType === 'free'
+        scopeType === 'free' && !isKoraGuided
           ? searchReceivingProducts(apiClient, term, 25).then((products) => {
               const activeProducts = filterActiveReceivingProducts(products);
               const countedByProductId = new Map<number, number>();
@@ -381,7 +440,11 @@ export function RecountsScreen({
                 group_name: null,
               }));
             })
-          : getRecountDetail(apiClient, selectedId, { q: term, skip: 0, limit: 25 }).then((data) =>
+          : getRecountDetail(apiClient, selectedId, {
+              q: term,
+              skip: 0,
+              limit: 25,
+            }).then((data) =>
               data.lines.map<ManualResultRow>((line) => ({
                 id: line.id,
                 product_id: line.product_id,
@@ -408,7 +471,16 @@ export function RecountsScreen({
       active = false;
       clearTimeout(timer);
     };
-  }, [apiClient, detail?.lines, detail?.recount.scope_type, manualAddOpen, manualQuery, selectedId, workspaceOpen]);
+  }, [
+    apiClient,
+    detail?.lines,
+    detail?.recount.scope_type,
+    detail?.recount.title,
+    manualAddOpen,
+    manualQuery,
+    selectedId,
+    workspaceOpen,
+  ]);
 
   const handleOpenScanner = useCallback(async () => {
     if (!cameraDevice) {
@@ -441,62 +513,83 @@ export function RecountsScreen({
     [apiClient, canMutate, resolveCountedQty, selectedId],
   );
 
-  const handleScannedCode = useCallback(async (rawCode: string) => {
-    if (!canMutate) {
-      setError('Sin conexión con API. Revalida la conexión para continuar.');
-      return;
-    }
-    if (!selectedId) return;
-    const scanned = normalizeBarcode(rawCode);
-    if (!scanned) return;
-    setError(null);
-    try {
-      let match = findLineByCode(detail?.lines ?? [], scanned);
-      if (!match) {
-        const searchResult = await getRecountDetail(apiClient, selectedId, {
-          q: scanned,
-          skip: 0,
-          limit: 20,
-        });
-        match = findLineByCode(searchResult.lines, scanned);
+  const handleScannedCode = useCallback(
+    async (rawCode: string) => {
+      if (!canMutate) {
+        setError('Sin conexión con API. Revalida la conexión para continuar.');
+        return;
       }
-      if (match) {
-        await incrementLineByOne(match);
-      } else {
-        const picked = await resolveReceivingProductByBarcode(apiClient, scanned);
-
-        if (!picked) {
-          const message = `No se encontró producto para el código de barras ${rawCode}.`;
-          ToastAndroid.show('No se encontró producto para ese código de barras.', ToastAndroid.SHORT);
-          setError(message);
-          return;
+      if (!selectedId) return;
+      const scanned = normalizeBarcode(rawCode);
+      if (!scanned) return;
+      setError(null);
+      try {
+        let match = findLineByCode(detail?.lines ?? [], scanned);
+        if (!match) {
+          const searchResult = await getRecountDetail(apiClient, selectedId, {
+            q: scanned,
+            skip: 0,
+            limit: 20,
+          });
+          match = findLineByCode(searchResult.lines, scanned);
         }
+        if (match) {
+          await incrementLineByOne(match);
+        } else {
+          if (detail?.recount.title?.startsWith('Kora ·')) {
+            ToastAndroid.show('Ese producto no pertenece a este plan de Kora.', ToastAndroid.SHORT);
+            setError('El producto escaneado no pertenece a la lista priorizada por Kora.');
+            return;
+          }
+          const picked = await resolveReceivingProductByBarcode(apiClient, scanned);
 
-        const currentCount = resolveCountedQty(picked.id);
-        const nextCount = Number.isFinite(currentCount) ? currentCount + 1 : 1;
-        await upsertRecountLine(apiClient, selectedId, {
-          product_id: picked.id,
-          counted_qty: nextCount,
-        });
-        setLineDraft((prev) => ({ ...prev, [picked.id]: String(nextCount) }));
+          if (!picked) {
+            const message = `No se encontró producto para el código de barras ${rawCode}.`;
+            ToastAndroid.show('No se encontró producto para ese código de barras.', ToastAndroid.SHORT);
+            setError(message);
+            return;
+          }
+
+          const currentCount = resolveCountedQty(picked.id);
+          const nextCount = Number.isFinite(currentCount) ? currentCount + 1 : 1;
+          await upsertRecountLine(apiClient, selectedId, {
+            product_id: picked.id,
+            counted_qty: nextCount,
+          });
+          setLineDraft((prev) => ({ ...prev, [picked.id]: String(nextCount) }));
+        }
+        await loadDetail();
+        loadDocs({ silent: true }).catch(() => undefined);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'No se pudo procesar el escaneo');
       }
-      await loadDetail();
-      loadDocs({ silent: true }).catch(() => undefined);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo procesar el escaneo');
-    }
-  }, [apiClient, canMutate, detail?.lines, incrementLineByOne, loadDetail, loadDocs, resolveCountedQty, selectedId]);
+    },
+    [
+      apiClient,
+      canMutate,
+      detail?.lines,
+      detail?.recount.title,
+      incrementLineByOne,
+      loadDetail,
+      loadDocs,
+      resolveCountedQty,
+      selectedId,
+    ],
+  );
 
-  const handleCodeScanned = useCallback((codes: Code[]) => {
-    if (!scannerOpen || !codes.length) return;
-    const firstReadable = codes.find((item) => typeof item.value === 'string' && item.value.trim().length > 0);
-    if (!firstReadable?.value) return;
-    const now = Date.now();
-    if (now - scannerCooldownRef.current < 900) return;
-    scannerCooldownRef.current = now;
-    setScannerOpen(false);
-    handleScannedCode(firstReadable.value).catch(() => undefined);
-  }, [handleScannedCode, scannerOpen]);
+  const handleCodeScanned = useCallback(
+    (codes: Code[]) => {
+      if (!scannerOpen || !codes.length) return;
+      const firstReadable = codes.find((item) => typeof item.value === 'string' && item.value.trim().length > 0);
+      if (!firstReadable?.value) return;
+      const now = Date.now();
+      if (now - scannerCooldownRef.current < 900) return;
+      scannerCooldownRef.current = now;
+      setScannerOpen(false);
+      handleScannedCode(firstReadable.value).catch(() => undefined);
+    },
+    [handleScannedCode, scannerOpen],
+  );
 
   const codeScanner = useCodeScanner({
     codeTypes: ['ean-13', 'ean-8', 'code-128', 'code-39', 'upc-a', 'upc-e', 'qr'],
@@ -504,31 +597,30 @@ export function RecountsScreen({
   });
 
   const countedLines = useMemo(() => detail?.lines ?? [], [detail?.lines]);
+  const filteredCountedLines = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return countedLines;
+    return countedLines.filter((line) => {
+      const haystack = `${line.product_name} ${line.sku || ''} ${line.barcode || ''}`.toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [countedLines, search]);
   const filteredGroupOptions = useMemo(() => {
     const term = groupSearch.trim().toLowerCase();
-    const sorted = [...groupOptions].sort((a, b) =>
-      a.path.localeCompare(b.path, 'es', { sensitivity: 'base' }),
-    );
+    const sorted = [...groupOptions].sort((a, b) => a.path.localeCompare(b.path, 'es', { sensitivity: 'base' }));
     if (!term) return sorted;
     return sorted.filter(
-      (group) =>
-        group.display_name.toLowerCase().includes(term) ||
-        group.path.toLowerCase().includes(term),
+      (group) => group.display_name.toLowerCase().includes(term) || group.path.toLowerCase().includes(term),
     );
   }, [groupOptions, groupSearch]);
   const activeDocs = useMemo(
     () => docs.filter((doc) => doc.status !== 'cancelled' && doc.status !== 'applied'),
     [docs],
   );
-  const latestCompletedDoc = useMemo(() => {
-    const applied = docs.filter((doc) => doc.status === 'applied');
-    if (!applied.length) return null;
-    return [...applied].sort((a, b) => {
-      const aDate = a.applied_at || a.closed_at || a.created_at || '';
-      const bDate = b.applied_at || b.closed_at || b.created_at || '';
-      return bDate.localeCompare(aDate);
-    })[0];
-  }, [docs]);
+  const primaryDoc = activeDocs[0] ?? null;
+  const convertedPlanDoc = koraPlan?.converted_recount_id
+    ? activeDocs.find((doc) => doc.id === koraPlan.converted_recount_id) ?? null
+    : null;
 
   useEffect(() => {
     if (!workspaceOpen || manualAddOpen || !autoFollowList) return;
@@ -584,6 +676,50 @@ export function RecountsScreen({
     } finally {
       setCreating(false);
     }
+  }
+
+  async function handleRetrieveKoraPlan() {
+    if (!ensureCanMutate()) return;
+    setKoraPlanAction('retrieve');
+    setKoraPlanError(null);
+    try {
+      const response = await retrieveKoraStockPlan(apiClient, 15);
+      setKoraPlan(response.plan ?? null);
+      if (!response.plan) {
+        setKoraPlanError(response.message || 'Kora no encontró productos disponibles para este plan.');
+      }
+    } catch (err) {
+      setKoraPlanError(err instanceof Error ? err.message : 'No se pudo obtener el plan de Kora.');
+    } finally {
+      setKoraPlanAction(null);
+    }
+  }
+
+  async function handleConvertKoraPlan() {
+    if (!ensureCanMutate()) return;
+    if (!koraPlan) return;
+    if (!stockDeviceId.trim()) {
+      setKoraPlanError('Esta tablet no tiene un dispositivo de inventario configurado.');
+      return;
+    }
+    setKoraPlanAction('convert');
+    setKoraPlanError(null);
+    try {
+      const conversion = await convertKoraStockPlan(apiClient, koraPlan.id, stockDeviceId.trim());
+      setKoraPlan(conversion.plan);
+      await loadDocs();
+      setSelectedId(conversion.recount.id);
+      setWorkspaceOpen(true);
+    } catch (err) {
+      setKoraPlanError(err instanceof Error ? err.message : 'No se pudo iniciar el recuento guiado.');
+    } finally {
+      setKoraPlanAction(null);
+    }
+  }
+
+  function openRecount(doc: RecountRecord) {
+    setSelectedId(doc.id);
+    setWorkspaceOpen(true);
   }
 
   async function handleSaveLine(productId: number, countedOverride?: string | number): Promise<boolean> {
@@ -717,12 +853,12 @@ export function RecountsScreen({
     if (!selectedDocForActions) return;
     if (!canCloseRecount(selectedDocForActions.status)) return;
     setListActionLoading('close');
-      setError(null);
-      try {
-        await closeRecount(apiClient, selectedDocForActions.id);
-        forceCloseDocActions();
-        await loadDocs();
-      } catch (err) {
+    setError(null);
+    try {
+      await closeRecount(apiClient, selectedDocForActions.id);
+      forceCloseDocActions();
+      await loadDocs();
+    } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo cerrar recuento');
     } finally {
       setListActionLoading(null);
@@ -733,62 +869,54 @@ export function RecountsScreen({
     if (!ensureCanMutate()) return;
     if (!selectedDocForActions) return;
     if (!canApplyRecount(selectedDocForActions.status)) return;
-    Alert.alert(
-      'Aplicar recuento',
-      'Se generarán ajustes de inventario por diferencia. ¿Continuar?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Aplicar',
-          style: 'destructive',
-          onPress: async () => {
-            if (!selectedDocForActions) return;
-            setListActionLoading('apply');
-            setError(null);
-            try {
-              await applyRecount(apiClient, selectedDocForActions.id);
-              forceCloseDocActions();
-              await loadDocs();
-            } catch (err) {
-              setError(err instanceof Error ? err.message : 'No se pudo aplicar recuento');
-            } finally {
-              setListActionLoading(null);
-            }
-          },
+    Alert.alert('Aplicar recuento', 'Se generarán ajustes de inventario por diferencia. ¿Continuar?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Aplicar',
+        style: 'destructive',
+        onPress: async () => {
+          if (!selectedDocForActions) return;
+          setListActionLoading('apply');
+          setError(null);
+          try {
+            await applyRecount(apiClient, selectedDocForActions.id);
+            forceCloseDocActions();
+            await loadDocs();
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'No se pudo aplicar recuento');
+          } finally {
+            setListActionLoading(null);
+          }
         },
-      ],
-    );
+      },
+    ]);
   }
 
   function handleCancelRecountFromList() {
     if (!ensureCanMutate()) return;
     if (!selectedDocForActions) return;
     if (!canCancelRecount(selectedDocForActions.status)) return;
-    Alert.alert(
-      'Cancelar recuento',
-      'Este recuento quedará cancelado y ya no aceptará cambios. ¿Continuar?',
-      [
-        { text: 'Volver', style: 'cancel' },
-        {
-          text: 'Cancelar recuento',
-          style: 'destructive',
-          onPress: async () => {
-            if (!selectedDocForActions) return;
-            setListActionLoading('cancel');
-            setError(null);
-            try {
-              await cancelRecount(apiClient, selectedDocForActions.id);
-              forceCloseDocActions();
-              await loadDocs();
-            } catch (err) {
-              setError(err instanceof Error ? err.message : 'No se pudo cancelar recuento');
-            } finally {
-              setListActionLoading(null);
-            }
-          },
+    Alert.alert('Cancelar recuento', 'Este recuento quedará cancelado y ya no aceptará cambios. ¿Continuar?', [
+      { text: 'Volver', style: 'cancel' },
+      {
+        text: 'Cancelar recuento',
+        style: 'destructive',
+        onPress: async () => {
+          if (!selectedDocForActions) return;
+          setListActionLoading('cancel');
+          setError(null);
+          try {
+            await cancelRecount(apiClient, selectedDocForActions.id);
+            forceCloseDocActions();
+            await loadDocs();
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'No se pudo cancelar recuento');
+          } finally {
+            setListActionLoading(null);
+          }
         },
-      ],
-    );
+      },
+    ]);
   }
 
   async function handleApplyRecount() {
@@ -842,8 +970,12 @@ export function RecountsScreen({
     setGroupLabel('');
     setGroupSearch('');
     setNewMode('blind');
-    setLoadingGroupOptions(true);
     setShowCreateRecountModal(true);
+    if (groupOptions.length > 0) {
+      setLoadingGroupOptions(false);
+      return;
+    }
+    setLoadingGroupOptions(true);
     listReceivingProductGroups(apiClient, { limit: 5000, skip: 0 })
       .then((groups) => {
         setGroupOptions(groups);
@@ -885,7 +1017,10 @@ export function RecountsScreen({
         product_id: manualSelectedLine.product_id,
         counted_qty: next,
       });
-      setLineDraft((prev) => ({ ...prev, [manualSelectedLine.product_id]: String(next) }));
+      setLineDraft((prev) => ({
+        ...prev,
+        [manualSelectedLine.product_id]: String(next),
+      }));
       closeManualAddMode();
       await loadDetail();
       await loadDocs();
@@ -900,65 +1035,248 @@ export function RecountsScreen({
     return (
       <ScreenContainer backgroundColor="#E9EDF3">
         <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.headerRow}>
-            <View style={styles.headerTitleWrap}>
-              <Text style={styles.title}>Recuentos</Text>
-              <Text style={styles.subtitle}>Conteo físico por documento con aplicación de diferencias.</Text>
-            </View>
-            <View style={styles.actions}>
+          <View style={[styles.statusHero, activeDocs.length ? styles.statusHeroActive : styles.statusHeroIdle]}>
+            <View style={styles.statusHeaderRow}>
+              <View style={[styles.statusBadge, activeDocs.length ? styles.statusBadgeActive : styles.statusBadgeIdle]}>
+                <Text
+                  style={[
+                    styles.statusBadgeText,
+                    activeDocs.length ? styles.statusBadgeTextActive : styles.statusBadgeTextIdle,
+                  ]}
+                >
+                  {activeDocs.length ? 'EN CURSO' : 'LISTO'}
+                </Text>
+              </View>
               <Pressable
-                style={[styles.button, !canMutate ? styles.actionDisabled : null]}
+                style={[
+                  activeDocs.length ? styles.secondaryButton : styles.primaryButton,
+                  !canMutate ? styles.actionDisabled : null,
+                ]}
                 onPress={openCreateRecountModal}
                 disabled={!canMutate}
               >
-                <Text style={styles.buttonText}>Nuevo recuento</Text>
+                <Text style={activeDocs.length ? styles.secondaryButtonText : styles.primaryButtonText}>
+                  {activeDocs.length ? 'Crear otro' : 'Nuevo recuento'}
+                </Text>
               </Pressable>
             </View>
-          </View>
-          {!canMutate ? <Text style={styles.warning}>Sin conexión: creación, edición y cierre de recuentos bloqueados.</Text> : null}
 
-          <View style={styles.listCard}>
-            <Text style={styles.cardTitle}>Documentos</Text>
-            {loadingDocs ? <ActivityIndicator color="#0A8F5A" /> : null}
-            {!loadingDocs && activeDocs.length === 0 ? <Text style={styles.muted}>Sin recuentos abiertos.</Text> : null}
-            {activeDocs.map((doc) => (
-              <View key={doc.id} style={styles.docItem}>
-                <View style={styles.docItemRow}>
-                  <Pressable
-                    style={styles.docMainPressable}
-                    onPress={() => {
-                      setSelectedId(doc.id);
-                      setWorkspaceOpen(true);
-                    }}
-                  >
-                    <Text style={styles.docTitle}>{doc.code}</Text>
-                    <Text style={styles.docMeta}>
-                      {statusLabel(doc.status)} · {doc.summary.counted_lines}/{doc.summary.total_lines} líneas
+            <Text style={styles.statusTitle}>
+              {activeDocs.length === 0
+                ? 'No hay recuentos en curso'
+                : activeDocs.length === 1
+                ? 'Hay 1 recuento en curso'
+                : `Hay ${activeDocs.length} recuentos en curso`}
+            </Text>
+            <Text style={styles.statusDescription}>
+              {activeDocs.length
+                ? 'Continúa el documento prioritario para terminar el conteo y aplicar sus diferencias.'
+                : 'La tablet está lista para iniciar un conteo manual o trabajar una propuesta de Kora.'}
+            </Text>
+
+            {primaryDoc ? (
+              <View style={styles.statusRecommendation}>
+                <Text style={styles.statusRecommendationLabel}>Recomendado ahora</Text>
+                <Text style={styles.statusRecommendationTitle}>{primaryDoc.code}</Text>
+                <Text style={styles.statusRecommendationMeta}>
+                  {statusLabel(primaryDoc.status)} · {primaryDoc.summary.counted_lines}/{primaryDoc.summary.total_lines}{' '}
+                  productos contados
+                </Text>
+                <Text style={styles.statusRecommendationMeta}>
+                  Abierto: {formatBogotaDateTime(primaryDoc.created_at)}
+                  {primaryDoc.created_by_user_name ? ` · ${primaryDoc.created_by_user_name}` : ''}
+                </Text>
+                <View style={styles.statusActionRow}>
+                  <Pressable style={styles.primaryButton} onPress={() => openRecount(primaryDoc)}>
+                    <Text style={styles.primaryButtonText}>
+                      {primaryDoc.status === 'closed' ? 'Revisar y aplicar' : 'Continuar recuento'}
                     </Text>
                   </Pressable>
-                  <Pressable style={styles.docMoreButton} onPress={() => openDocActions(doc)}>
-                    <Text style={styles.docMoreButtonText}>⋮</Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+
+          {!canMutate ? (
+            <Text style={styles.warning}>Sin conexión: creación, edición y cierre de recuentos bloqueados.</Text>
+          ) : null}
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionHeaderCopy}>
+              <Text style={styles.title}>Recuentos en curso</Text>
+              <Text style={styles.sectionSubtitle}>
+                {activeDocs.length
+                  ? 'Abre un documento para continuar el conteo físico.'
+                  : 'Los documentos activos aparecerán aquí.'}
+              </Text>
+            </View>
+            {activeDocs.length ? (
+              <View style={styles.sectionCounter}>
+                <Text style={styles.sectionCounterText}>{activeDocs.length}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.recountList}>
+            {loadingDocs ? <ActivityIndicator color="#0A8F5A" /> : null}
+            {!loadingDocs && activeDocs.length === 0 ? (
+              <View style={styles.emptyStateCard}>
+                <Text style={styles.emptyStateTitle}>Sin recuentos abiertos</Text>
+                <Text style={styles.emptyStateText}>
+                  Inicia uno manualmente o pídele a Kora una lista priorizada para sanear inventario negativo.
+                </Text>
+              </View>
+            ) : null}
+            {activeDocs.map((doc) => (
+              <View
+                key={doc.id}
+                style={[styles.recountCard, doc.id === primaryDoc?.id ? styles.recountCardPriority : null]}
+              >
+                <View style={styles.recountCardTopRow}>
+                  <View style={styles.recountIdentity}>
+                    <Text style={styles.recountCode}>{doc.code}</Text>
+                    <Text style={styles.recountTitle}>{doc.title || 'Conteo físico de inventario'}</Text>
+                  </View>
+                  <View style={styles.recountTopActions}>
+                    <View style={styles.recountStatusBadge}>
+                      <Text style={styles.recountStatusBadgeText}>{statusLabel(doc.status)}</Text>
+                    </View>
+                    <Pressable style={styles.docMoreButton} onPress={() => openDocActions(doc)}>
+                      <Text style={styles.docMoreButtonText}>⋮</Text>
+                    </Pressable>
+                  </View>
+                </View>
+                <View style={styles.recountDetails}>
+                  <Text style={styles.docMeta}>
+                    Progreso: {doc.summary.counted_lines}/{doc.summary.total_lines} productos
+                  </Text>
+                  <Text style={styles.docMeta}>Apertura: {formatBogotaDateTime(doc.created_at)}</Text>
+                  {doc.created_by_user_name ? (
+                    <Text style={styles.docMeta}>Abrió: {doc.created_by_user_name}</Text>
+                  ) : null}
+                </View>
+                <View style={styles.recountCardActions}>
+                  <Pressable style={styles.primaryButton} onPress={() => openRecount(doc)}>
+                    <Text style={styles.primaryButtonText}>Abrir recuento</Text>
                   </Pressable>
                 </View>
               </View>
             ))}
           </View>
 
-          {latestCompletedDoc ? (
-            <View style={styles.listCard}>
-              <Text style={styles.cardTitle}>Último recuento completado</Text>
-              <View style={styles.docItem}>
-                <View style={styles.docMainPressable}>
-                  <Text style={styles.docTitle}>{latestCompletedDoc.code}</Text>
-                  <Text style={styles.docMeta}>
-                    Aplicado · {latestCompletedDoc.summary.counted_lines}/{latestCompletedDoc.summary.total_lines} líneas
-                  </Text>
-                </View>
-              </View>
+          <View style={styles.koraSectionHeader}>
+            <View style={styles.sectionHeaderCopy}>
+              <Text style={styles.title}>Plan de saneamiento</Text>
+              <Text style={styles.sectionSubtitle}>
+                Una lista corta y priorizada para convertir tiempo libre en inventario confiable.
+              </Text>
             </View>
-          ) : null}
+          </View>
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+          <View style={styles.koraCard}>
+            <View style={styles.koraBrandRow}>
+              <View style={styles.koraBadge}>
+                <Text style={styles.koraBadgeText}>KORA</Text>
+              </View>
+              {koraPlan ? <Text style={styles.koraPlanCode}>{koraPlan.code}</Text> : null}
+            </View>
+            {loadingKoraPlan ? <ActivityIndicator color="#0A8F5A" /> : null}
+            {!loadingKoraPlan && !koraPlan ? (
+              <>
+                <Text style={styles.koraTitle}>Obtén una ruta concreta para sanear stock</Text>
+                <Text style={styles.koraDescription}>
+                  Kora seleccionará productos negativos por prioridad y cercanía de categoría. El plan no modifica
+                  existencias hasta que termines y apliques el recuento.
+                </Text>
+                <View style={styles.koraActionRow}>
+                  <Pressable
+                    style={[styles.primaryButton, !canMutate ? styles.actionDisabled : null]}
+                    onPress={() => {
+                      handleRetrieveKoraPlan().catch(() => undefined);
+                    }}
+                    disabled={!canMutate || koraPlanAction !== null}
+                  >
+                    <Text style={styles.primaryButtonText}>
+                      {koraPlanAction === 'retrieve' ? 'Preparando...' : 'Obtener plan de Kora'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : null}
+
+            {koraPlan ? (
+              <>
+                <Text style={styles.koraTitle}>{koraPlan.group_name || 'Saneamiento de varias categorías'}</Text>
+                <Text style={styles.koraDescription}>
+                  {koraPlan.selected_count} productos priorizados de {koraPlan.negative_sku_count} SKU negativos
+                  detectados.
+                </Text>
+                <View style={styles.koraMetricsRow}>
+                  <View style={styles.koraMetric}>
+                    <Text style={styles.koraMetricValue}>{formatQty(koraPlan.total_negative_units)}</Text>
+                    <Text style={styles.koraMetricLabel}>unidades negativas</Text>
+                  </View>
+                  <View style={styles.koraMetric}>
+                    <Text style={styles.koraMetricValue}>{formatCop(koraPlan.total_cost_impact)}</Text>
+                    <Text style={styles.koraMetricLabel}>impacto al costo</Text>
+                  </View>
+                </View>
+                <Text style={styles.koraContext}>
+                  {koraPlan.context.available_people == null
+                    ? 'Capacidad del turno no disponible.'
+                    : `${koraPlan.context.available_people} persona${
+                        koraPlan.context.available_people === 1 ? '' : 's'
+                      } disponible${koraPlan.context.available_people === 1 ? '' : 's'} según horario.`}
+                  {koraPlan.context.open_receiving_count > 0
+                    ? ` Hay ${koraPlan.context.open_receiving_count} recepción en curso y Kora ya reservó dos personas.`
+                    : ''}
+                </Text>
+                <View style={styles.koraPreviewList}>
+                  {koraPlan.items.slice(0, 4).map((item) => (
+                    <View key={item.id} style={styles.koraPreviewItem}>
+                      <View style={styles.koraPriorityCircle}>
+                        <Text style={styles.koraPriorityText}>{item.priority_rank}</Text>
+                      </View>
+                      <View style={styles.koraPreviewCopy}>
+                        <Text style={styles.koraPreviewName} numberOfLines={1}>
+                          {item.product_name}
+                        </Text>
+                        <Text style={styles.koraPreviewMeta} numberOfLines={1}>
+                          {item.sku ? `SKU ${item.sku}` : item.group_name || 'Producto pendiente de conteo'}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                  {koraPlan.items.length > 4 ? (
+                    <Text style={styles.koraMoreItems}>+ {koraPlan.items.length - 4} productos más en el recuento</Text>
+                  ) : null}
+                </View>
+                <View style={styles.koraActionRow}>
+                  {koraPlan.status === 'ready' ? (
+                    <Pressable
+                      style={[styles.primaryButton, !canMutate ? styles.actionDisabled : null]}
+                      onPress={() => {
+                        handleConvertKoraPlan().catch(() => undefined);
+                      }}
+                      disabled={!canMutate || koraPlanAction !== null}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {koraPlanAction === 'convert' ? 'Creando recuento...' : 'Iniciar recuento guiado'}
+                      </Text>
+                    </Pressable>
+                  ) : convertedPlanDoc ? (
+                    <Pressable style={styles.primaryButton} onPress={() => openRecount(convertedPlanDoc)}>
+                      <Text style={styles.primaryButtonText}>Continuar plan de Kora</Text>
+                    </Pressable>
+                  ) : (
+                    <Text style={styles.koraConvertedText}>Este plan ya fue convertido en un recuento.</Text>
+                  )}
+                </View>
+              </>
+            ) : null}
+            {koraPlanError ? <Text style={styles.koraError}>{koraPlanError}</Text> : null}
+          </View>
 
           <Modal visible={showDocActionsModal} transparent animationType="fade" onRequestClose={closeDocActions}>
             <View style={styles.modalBackdrop}>
@@ -981,7 +1299,9 @@ export function RecountsScreen({
                   {selectedDocForActions && canCloseRecount(selectedDocForActions.status) ? (
                     <Pressable
                       style={[styles.actionSecondaryButton, !canMutate ? styles.actionDisabled : null]}
-                      onPress={() => { handleCloseRecountFromList().catch(() => undefined); }}
+                      onPress={() => {
+                        handleCloseRecountFromList().catch(() => undefined);
+                      }}
                       disabled={listActionLoading !== null || !canMutate}
                     >
                       <Text style={styles.actionSecondaryText}>
@@ -1011,7 +1331,11 @@ export function RecountsScreen({
                       </Text>
                     </Pressable>
                   ) : null}
-                  <Pressable style={styles.cancelButton} onPress={closeDocActions} disabled={listActionLoading !== null}>
+                  <Pressable
+                    style={styles.cancelButton}
+                    onPress={closeDocActions}
+                    disabled={listActionLoading !== null}
+                  >
                     <Text style={styles.cancelButtonText}>Cerrar</Text>
                   </Pressable>
                 </View>
@@ -1071,7 +1395,9 @@ export function RecountsScreen({
                     style={[styles.pill, newScopeType === 'group' ? styles.pillActive : null]}
                     onPress={() => setNewScopeType('group')}
                   >
-                    <Text style={[styles.pillText, newScopeType === 'group' ? styles.pillTextActive : null]}>Por categoría</Text>
+                    <Text style={[styles.pillText, newScopeType === 'group' ? styles.pillTextActive : null]}>
+                      Por categoría
+                    </Text>
                   </Pressable>
                 </View>
                 {newScopeType === 'group' ? (
@@ -1114,7 +1440,9 @@ export function RecountsScreen({
                   </Pressable>
                   <Pressable
                     style={styles.saveButton}
-                    onPress={() => { handleCreateRecount().catch(() => undefined); }}
+                    onPress={() => {
+                      handleCreateRecount().catch(() => undefined);
+                    }}
                     disabled={creating || !canMutate}
                   >
                     <Text style={styles.saveButtonText}>{creating ? 'Creando...' : 'Crear recuento'}</Text>
@@ -1143,40 +1471,45 @@ export function RecountsScreen({
                   placeholderTextColor="#64748b"
                 />
                 <View style={styles.groupListWrap}>
-                  <ScrollView keyboardShouldPersistTaps="handled">
-                    <View style={styles.groupListContent}>
-                      {filteredGroupOptions.map((group) => (
-                        <Pressable
-                          key={group.path}
-                          style={styles.groupItem}
-                          onPress={() => {
-                            setNewScopeValue(group.path);
-                            setGroupLabel(group.display_name);
-                            setCreateRecountError(null);
-                            setShowGroupPicker(false);
-                          }}
+                  <FlatList
+                    data={filteredGroupOptions}
+                    keyExtractor={(group) => group.path}
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={styles.groupListContent}
+                    initialNumToRender={12}
+                    maxToRenderPerBatch={12}
+                    windowSize={7}
+                    removeClippedSubviews
+                    renderItem={({ item: group }) => (
+                      <Pressable
+                        style={styles.groupItem}
+                        onPress={() => {
+                          setNewScopeValue(group.path);
+                          setGroupLabel(group.display_name);
+                          setCreateRecountError(null);
+                          setShowGroupPicker(false);
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.groupItemTitle,
+                            {
+                              marginLeft: Math.max(0, group.path.split('/').length - 1) * 10,
+                            },
+                          ]}
                         >
-                          <Text
-                            style={[
-                              styles.groupItemTitle,
-                              { marginLeft: Math.max(0, group.path.split('/').length - 1) * 10 },
-                            ]}
-                          >
-                            {group.display_name}
-                          </Text>
-                          <Text style={styles.groupItemPath}>{group.path}</Text>
-                          {group.parent_path ? (
-                            <Text style={styles.groupItemMeta}>Subgrupo de: {group.parent_path}</Text>
-                          ) : (
-                            <Text style={styles.groupItemMeta}>Grupo principal</Text>
-                          )}
-                        </Pressable>
-                      ))}
-                      {filteredGroupOptions.length === 0 ? (
-                        <Text style={styles.emptyText}>No hay grupos que coincidan.</Text>
-                      ) : null}
-                    </View>
-                  </ScrollView>
+                          {group.display_name}
+                        </Text>
+                        <Text style={styles.groupItemPath}>{group.path}</Text>
+                        {group.parent_path ? (
+                          <Text style={styles.groupItemMeta}>Subgrupo de: {group.parent_path}</Text>
+                        ) : (
+                          <Text style={styles.groupItemMeta}>Grupo principal</Text>
+                        )}
+                      </Pressable>
+                    )}
+                    ListEmptyComponent={<Text style={styles.emptyText}>No hay grupos que coincidan.</Text>}
+                  />
                 </View>
                 <View style={styles.modalActions}>
                   <Pressable style={styles.cancelButton} onPress={() => setShowGroupPicker(false)}>
@@ -1288,7 +1621,9 @@ export function RecountsScreen({
 
       <Pressable
         style={[styles.saveButton, !manualSelectedLine || !canMutate ? styles.saveButtonDisabled : null]}
-        onPress={() => { handleAddManualLine().catch(() => undefined); }}
+        onPress={() => {
+          handleAddManualLine().catch(() => undefined);
+        }}
         disabled={manualSubmitting || !manualSelectedLine || !canMutate}
       >
         <Text style={styles.saveButtonText}>{manualSubmitting ? 'Guardando...' : 'Agregar al recuento'}</Text>
@@ -1299,33 +1634,11 @@ export function RecountsScreen({
   return (
     <ScreenContainer backgroundColor="#E9EDF3" scrollEnabled={false}>
       {loadingDetail ? <ActivityIndicator color="#0A8F5A" /> : null}
-      {!canMutate ? <Text style={styles.warning}>Sin conexión: recuento en modo lectura. Revalida para continuar.</Text> : null}
+      {!canMutate ? (
+        <Text style={styles.warning}>Sin conexión: recuento en modo lectura. Revalida para continuar.</Text>
+      ) : null}
       {detail ? (
-        <ScrollView
-          ref={listScrollRef}
-          style={styles.workspaceScroll}
-          contentContainerStyle={styles.workspaceScrollContent}
-          stickyHeaderIndices={[0]}
-          scrollEventThrottle={16}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          onScroll={(event) => {
-            const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-            const remaining = contentSize.height - (contentOffset.y + layoutMeasurement.height);
-            const shouldEnableAutoFollow = remaining < 24;
-            const shouldDisableAutoFollow = remaining > 96;
-
-            if (!autoFollowRef.current && shouldEnableAutoFollow) {
-              autoFollowRef.current = true;
-              setAutoFollowList(true);
-              return;
-            }
-            if (autoFollowRef.current && shouldDisableAutoFollow) {
-              autoFollowRef.current = false;
-              setAutoFollowList(false);
-            }
-          }}
-        >
+        <View style={styles.workspaceScroll}>
           <View style={styles.workspaceSticky}>
             <View style={styles.workspaceHeaderBlock}>
               <Text style={styles.workspaceTitle}>{detail.recount.code || 'Recuento'}</Text>
@@ -1366,7 +1679,9 @@ export function RecountsScreen({
               </View>
               <Pressable
                 style={styles.searchScannerButton}
-                onPress={() => { handleOpenScanner().catch(() => undefined); }}
+                onPress={() => {
+                  handleOpenScanner().catch(() => undefined);
+                }}
                 disabled={!canMutate}
               >
                 <View style={styles.searchScannerIconFrame}>
@@ -1388,7 +1703,9 @@ export function RecountsScreen({
               onPress={() => (manualAddOpen ? closeManualAddMode() : openManualAddMode())}
               disabled={!canMutate}
             >
-              <Text style={styles.toggleBtnText}>{manualAddOpen ? 'Ocultar agregado manual' : 'Mostrar agregado manual'}</Text>
+              <Text style={styles.toggleBtnText}>
+                {manualAddOpen ? 'Ocultar agregado manual' : 'Mostrar agregado manual'}
+              </Text>
             </Pressable>
 
             {!manualAddOpen ? (
@@ -1401,154 +1718,189 @@ export function RecountsScreen({
               />
             ) : null}
           </View>
-          {manualAddPanel}
-          {!manualAddOpen
-            ? countedLines
-              .filter((line) => {
-                const term = search.trim().toLowerCase();
-                if (!term) return true;
-                const hay = `${line.product_name} ${line.sku || ''} ${line.barcode || ''}`.toLowerCase();
-                return hay.includes(term);
-              })
-              .map((line) => {
-                const draft = lineDraft[line.product_id] ?? '';
-                const draftNumber = draft === '' ? null : Number(draft);
-                const diff =
-                  draftNumber == null || Number.isNaN(draftNumber)
-                    ? null
-                    : draftNumber - line.system_qty;
-                const isEditing = editingLineId === line.product_id;
-                const readonlyCount = Number(lineDraft[line.product_id] ?? line.counted_qty ?? 0);
-                return (
-                  <View key={line.id} style={styles.lineCard}>
-                    <Text style={styles.lineName}>{line.product_name}</Text>
-                    <Text style={styles.lineMeta}>
-                      SKU: {line.sku || 'N/A'} · Código de barras: {line.barcode || 'N/A'}
+          <FlatList
+            ref={listScrollRef}
+            style={styles.workspaceList}
+            contentContainerStyle={styles.workspaceScrollContent}
+            data={manualAddOpen ? [] : filteredCountedLines}
+            keyExtractor={(line) => String(line.id)}
+            initialNumToRender={8}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={32}
+            windowSize={7}
+            removeClippedSubviews
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            scrollEventThrottle={32}
+            onScroll={(event) => {
+              const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+              const remaining = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+              const shouldEnableAutoFollow = remaining < 24;
+              const shouldDisableAutoFollow = remaining > 96;
+
+              if (!autoFollowRef.current && shouldEnableAutoFollow) {
+                autoFollowRef.current = true;
+                setAutoFollowList(true);
+                return;
+              }
+              if (autoFollowRef.current && shouldDisableAutoFollow) {
+                autoFollowRef.current = false;
+                setAutoFollowList(false);
+              }
+            }}
+            ListHeaderComponent={manualAddPanel}
+            renderItem={({ item: line }) => {
+              const draft = lineDraft[line.product_id] ?? '';
+              const hasCount = line.counted_qty != null || draft !== '';
+              const draftNumber = draft === '' ? null : Number(draft);
+              const diff = draftNumber == null || Number.isNaN(draftNumber) ? null : draftNumber - line.system_qty;
+              const isEditing = editingLineId === line.product_id;
+              const readonlyCount = Number(lineDraft[line.product_id] ?? line.counted_qty ?? 0);
+              return (
+                <View style={styles.lineCard}>
+                  <Text style={styles.lineName}>{line.product_name}</Text>
+                  <Text style={styles.lineMeta}>
+                    SKU: {line.sku || 'N/A'} · Código de barras: {line.barcode || 'N/A'}
+                  </Text>
+                  <View style={styles.lineRow}>
+                    {detail.recount.count_mode !== 'blind' ? (
+                      <Text style={styles.lineMeta}>Sistema: {formatQty(line.system_qty)}</Text>
+                    ) : (
+                      <View />
+                    )}
+                    <Text
+                      style={[
+                        styles.lineMeta,
+                        diff == null ? null : diff < 0 ? styles.negative : diff > 0 ? styles.positive : null,
+                      ]}
+                    >
+                      Dif: {diff == null ? '—' : formatQty(diff)}
                     </Text>
-                    <View style={styles.lineRow}>
-                      {detail.recount.count_mode !== 'blind' ? (
-                        <Text style={styles.lineMeta}>Sistema: {formatQty(line.system_qty)}</Text>
-                      ) : (
-                        <View />
-                      )}
-                      <Text
-                        style={[
-                          styles.lineMeta,
-                          diff == null ? null : diff < 0 ? styles.negative : diff > 0 ? styles.positive : null,
-                        ]}
+                  </View>
+                  {!isEditing ? (
+                    <View style={styles.lineInputRow}>
+                      <View style={styles.readonlyQtyBox}>
+                        <Text style={styles.readonlyQtyText}>
+                          {hasCount && Number.isFinite(readonlyCount)
+                            ? `Cantidad: ${formatQty(readonlyCount)}`
+                            : 'Pendiente de conteo'}
+                        </Text>
+                      </View>
+                      <Pressable
+                        style={styles.secondaryBtn}
+                        onPress={() => startEditLine(line)}
+                        disabled={lineSavingId === line.product_id || !canMutate}
                       >
-                        Dif: {diff == null ? '—' : formatQty(diff)}
-                      </Text>
-                    </View>
-                    {!isEditing ? (
-                      <View style={styles.lineInputRow}>
-                        <View style={styles.readonlyQtyBox}>
-                          <Text style={styles.readonlyQtyText}>
-                            Cantidad: {Number.isFinite(readonlyCount) ? formatQty(readonlyCount) : '0'}
-                          </Text>
-                        </View>
-                        <Pressable
-                          style={styles.secondaryBtn}
-                          onPress={() => startEditLine(line)}
-                          disabled={lineSavingId === line.product_id || !canMutate}
-                        >
-                          <Text style={styles.secondaryBtnText}>Editar</Text>
-                        </Pressable>
+                        <Text style={styles.secondaryBtnText}>{hasCount ? 'Editar' : 'Registrar'}</Text>
+                      </Pressable>
+                      {hasCount ? (
                         <Pressable
                           style={styles.deleteBtn}
-                          onPress={() => { handleDeleteLine(line.product_id).catch(() => undefined); }}
+                          onPress={() => {
+                            handleDeleteLine(line.product_id).catch(() => undefined);
+                          }}
                           disabled={lineSavingId === line.product_id || !canMutate}
                         >
                           <Text style={styles.deleteBtnText}>Eliminar</Text>
                         </Pressable>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <>
+                      <View style={styles.qtyRow}>
+                        <Pressable
+                          style={styles.qtyStepBtn}
+                          onPress={() => {
+                            const current = Number(editingQty) || 0;
+                            setEditingQty(String(Math.max(0, current - 1)));
+                          }}
+                        >
+                          <Text style={styles.qtyStepText}>-</Text>
+                        </Pressable>
+                        <View style={styles.readonlyQtyBox}>
+                          <Text style={styles.readonlyQtyText}>{formatQty(Number(editingQty) || 0)}</Text>
+                        </View>
+                        <Pressable
+                          style={styles.qtyStepBtn}
+                          onPress={() => {
+                            const current = Number(editingQty) || 0;
+                            setEditingQty(String(current + 1));
+                          }}
+                        >
+                          <Text style={styles.qtyStepText}>+</Text>
+                        </Pressable>
                       </View>
-                    ) : (
-                      <>
-                        <View style={styles.qtyRow}>
-                          <Pressable
-                            style={styles.qtyStepBtn}
-                            onPress={() => {
-                              const current = Number(editingQty) || 0;
-                              setEditingQty(String(Math.max(0, current - 1)));
-                            }}
-                          >
-                            <Text style={styles.qtyStepText}>-</Text>
-                          </Pressable>
-                          <View style={styles.readonlyQtyBox}>
-                            <Text style={styles.readonlyQtyText}>{formatQty(Number(editingQty) || 0)}</Text>
-                          </View>
-                          <Pressable
-                            style={styles.qtyStepBtn}
-                            onPress={() => {
-                              const current = Number(editingQty) || 0;
-                              setEditingQty(String(current + 1));
-                            }}
-                          >
-                            <Text style={styles.qtyStepText}>+</Text>
-                          </Pressable>
-                        </View>
-                        <View style={styles.lineInputRow}>
-                          <Pressable style={styles.secondaryBtn} onPress={cancelEditLine}>
-                            <Text style={styles.secondaryBtnText}>Cancelar</Text>
-                          </Pressable>
-                          <Pressable
-                            style={styles.primaryBtn}
-                            onPress={() => { saveEditedLine(line.product_id).catch(() => undefined); }}
-                            disabled={lineSavingId === line.product_id || !canMutate}
-                          >
-                            <Text style={styles.primaryBtnText}>
-                              {lineSavingId === line.product_id ? '...' : 'Guardar'}
-                            </Text>
-                          </Pressable>
-                        </View>
-                      </>
-                    )}
-                  </View>
-                );
-              })
-            : null}
-
-          {!manualAddOpen && countedLines.length === 0 ? (
-            <Text style={styles.muted}>Aún no hay líneas en el documento. Escanea para empezar.</Text>
-          ) : null}
-
-          <View style={styles.actionsRow}>
-            <Pressable
-              style={[
-                styles.secondaryBtn,
-                detail.recount.status === 'closed' ? null : styles.secondaryBtnFull,
-              ]}
-              onPress={() => {
-                if (isTerminalRecountStatus(detail.recount.status)) {
-                  setWorkspaceOpen(false);
-                  return;
-                }
-                handleCloseRecount();
-              }}
-              disabled={actionLoading !== null || (!isTerminalRecountStatus(detail.recount.status) && !canMutate)}
-            >
-              <Text style={styles.secondaryBtnText}>
-                {isTerminalRecountStatus(detail.recount.status)
-                  ? 'Volver'
-                  : actionLoading === 'close'
-                    ? 'Cerrando...'
-                    : 'Cerrar'}
-              </Text>
-            </Pressable>
-            {detail.recount.status === 'closed' ? (
-              <Pressable
-                style={styles.primaryBtn}
-                onPress={() => { handleApplyRecount().catch(() => undefined); }}
-                disabled={actionLoading !== null || !canMutate}
-              >
-                <Text style={styles.primaryBtnText}>
-                  {actionLoading === 'apply' ? 'Aplicando...' : 'Aplicar'}
+                      <View style={styles.lineInputRow}>
+                        <Pressable style={styles.secondaryBtn} onPress={cancelEditLine}>
+                          <Text style={styles.secondaryBtnText}>Cancelar</Text>
+                        </Pressable>
+                        <Pressable
+                          style={styles.primaryBtn}
+                          onPress={() => {
+                            saveEditedLine(line.product_id).catch(() => undefined);
+                          }}
+                          disabled={lineSavingId === line.product_id || !canMutate}
+                        >
+                          <Text style={styles.primaryBtnText}>
+                            {lineSavingId === line.product_id ? '...' : 'Guardar'}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  )}
+                </View>
+              );
+            }}
+            ListEmptyComponent={
+              manualAddOpen ? null : (
+                <Text style={styles.muted}>
+                  {countedLines.length === 0
+                    ? 'Aún no hay líneas en el documento. Escanea para empezar.'
+                    : 'No hay líneas que coincidan con la búsqueda.'}
                 </Text>
-              </Pressable>
-            ) : null}
-          </View>
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-        </ScrollView>
+              )
+            }
+            ListFooterComponent={
+              <View style={styles.workspaceListFooter}>
+                <View style={styles.actionsRow}>
+                  <Pressable
+                    style={[styles.secondaryBtn, detail.recount.status === 'closed' ? null : styles.secondaryBtnFull]}
+                    onPress={() => {
+                      if (isTerminalRecountStatus(detail.recount.status)) {
+                        setWorkspaceOpen(false);
+                        return;
+                      }
+                      handleCloseRecount();
+                    }}
+                    disabled={actionLoading !== null || (!isTerminalRecountStatus(detail.recount.status) && !canMutate)}
+                  >
+                    <Text style={styles.secondaryBtnText}>
+                      {isTerminalRecountStatus(detail.recount.status)
+                        ? 'Volver'
+                        : actionLoading === 'close'
+                        ? 'Cerrando...'
+                        : 'Cerrar'}
+                    </Text>
+                  </Pressable>
+                  {detail.recount.status === 'closed' ? (
+                    <Pressable
+                      style={styles.primaryBtn}
+                      onPress={() => {
+                        handleApplyRecount().catch(() => undefined);
+                      }}
+                      disabled={actionLoading !== null || !canMutate}
+                    >
+                      <Text style={styles.primaryBtnText}>
+                        {actionLoading === 'apply' ? 'Aplicando...' : 'Aplicar'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                {error ? <Text style={styles.error}>{error}</Text> : null}
+              </View>
+            }
+          />
+        </View>
       ) : (
         <View style={styles.workspaceFallback}>
           <Text style={styles.workspaceFallbackTitle}>No pudimos cargar este recuento</Text>
@@ -1557,7 +1909,9 @@ export function RecountsScreen({
           </Text>
           <Pressable
             style={styles.secondaryBtn}
-            onPress={() => { loadDetail().catch(() => undefined); }}
+            onPress={() => {
+              loadDetail().catch(() => undefined);
+            }}
           >
             <Text style={styles.secondaryBtnText}>Reintentar</Text>
           </Pressable>
@@ -1604,13 +1958,389 @@ const styles = StyleSheet.create({
     paddingBottom: 130,
     gap: 12,
   },
+  statusHero: {
+    borderRadius: 22,
+    padding: 18,
+    gap: 12,
+    borderWidth: 1,
+  },
+  statusHeroActive: {
+    backgroundColor: '#F7FCEB',
+    borderColor: '#C8DEA1',
+  },
+  statusHeroIdle: {
+    backgroundColor: '#F3FAF7',
+    borderColor: '#B7DEC9',
+  },
+  statusHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  statusBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  statusBadgeActive: {
+    backgroundColor: '#FFF7D6',
+    borderColor: '#E7C76A',
+  },
+  statusBadgeIdle: {
+    backgroundColor: '#DFF4E8',
+    borderColor: '#8AC7A5',
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  statusBadgeTextActive: {
+    color: '#9A6700',
+  },
+  statusBadgeTextIdle: {
+    color: '#0B6B45',
+  },
+  statusTitle: {
+    color: '#0F172A',
+    fontSize: 26,
+    lineHeight: 30,
+    fontWeight: '800',
+  },
+  statusDescription: {
+    color: '#334155',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  statusRecommendation: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#D7E7BA',
+    padding: 14,
+    gap: 6,
+  },
+  statusRecommendationLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  statusRecommendationTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  statusRecommendationMeta: {
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  statusActionRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+  },
+  primaryButton: {
+    backgroundColor: '#0A8F5A',
+    borderWidth: 1,
+    borderColor: '#67C48D',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryButtonText: {
+    color: '#F8FAFC',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  secondaryButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#C7D2E0',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  secondaryButtonText: {
+    color: '#334155',
+    fontWeight: '700',
+  },
+  sectionHeader: {
+    marginTop: 18,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  sectionHeaderCopy: {
+    flex: 1,
+  },
+  sectionSubtitle: {
+    marginTop: 4,
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  sectionCounter: {
+    minWidth: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#DFF4E8',
+    borderWidth: 1,
+    borderColor: '#9ED9B3',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  sectionCounterText: {
+    color: '#0A8F5A',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  recountList: {
+    gap: 12,
+  },
+  emptyStateCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#D5DEE9',
+    padding: 18,
+    gap: 6,
+  },
+  emptyStateTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  emptyStateText: {
+    color: '#475569',
+    lineHeight: 20,
+  },
+  recountCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#D3DEE8',
+    padding: 14,
+    gap: 12,
+  },
+  recountCardPriority: {
+    borderColor: '#A7D6B6',
+    backgroundColor: '#FCFEFD',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  recountCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  recountIdentity: {
+    flex: 1,
+  },
+  recountTopActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  recountCode: {
+    color: '#0F172A',
+    fontSize: 19,
+    fontWeight: '800',
+  },
+  recountTitle: {
+    marginTop: 2,
+    color: '#334155',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  recountStatusBadge: {
+    backgroundColor: '#FFF4D6',
+    borderWidth: 1,
+    borderColor: '#EAC76A',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  recountStatusBadgeText: {
+    color: '#946200',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  recountDetails: {
+    gap: 4,
+  },
+  recountCardActions: {
+    flexDirection: 'row',
+  },
+  koraSectionHeader: {
+    marginTop: 20,
+    flexDirection: 'row',
+  },
+  koraCard: {
+    backgroundColor: '#F0FBF6',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#A7D6B6',
+    padding: 18,
+    gap: 12,
+  },
+  koraBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  koraBadge: {
+    backgroundColor: '#0A8F5A',
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+  },
+  koraBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  koraPlanCode: {
+    color: '#0B6B45',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  koraTitle: {
+    color: '#0F172A',
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: '800',
+  },
+  koraDescription: {
+    color: '#334155',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  koraMetricsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  koraMetric: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBE7D5',
+    borderRadius: 14,
+    padding: 12,
+    gap: 3,
+  },
+  koraMetricValue: {
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  koraMetricLabel: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  koraContext: {
+    color: '#35584A',
+    backgroundColor: '#DFF4E8',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  koraPreviewList: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBE7D5',
+    borderRadius: 16,
+    padding: 12,
+    gap: 10,
+  },
+  koraPreviewItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  koraPriorityCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#DFF4E8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  koraPriorityText: {
+    color: '#0A8F5A',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  koraPreviewCopy: {
+    flex: 1,
+  },
+  koraPreviewName: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  koraPreviewMeta: {
+    marginTop: 2,
+    color: '#64748B',
+    fontSize: 11,
+  },
+  koraMoreItems: {
+    color: '#0A8F5A',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  koraActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  koraConvertedText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  koraError: {
+    color: '#B42318',
+    backgroundColor: '#FEF3F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    lineHeight: 18,
+  },
   workspaceScroll: {
+    flex: 1,
+    width: '100%',
+  },
+  workspaceList: {
+    flex: 1,
     width: '100%',
   },
   workspaceScrollContent: {
     paddingTop: 16,
     gap: 12,
     paddingBottom: 130,
+  },
+  workspaceListFooter: {
+    gap: 12,
   },
   workspaceSticky: {
     backgroundColor: '#E9EDF3',

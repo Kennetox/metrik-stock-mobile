@@ -50,6 +50,15 @@ const SORT_OPTIONS: SortMenuOption[] = [
   { value: 'price_stock_desc', label: 'Precio en stock mayor a menor' },
 ];
 
+const QTY_FORMATTER = new Intl.NumberFormat('es-CO', {
+  maximumFractionDigits: 0,
+});
+const MONEY_FORMATTER = new Intl.NumberFormat('es-CO', {
+  style: 'currency',
+  currency: 'COP',
+  maximumFractionDigits: 0,
+});
+
 function normalizeFilterText(value: string): string {
   return (value || '')
     .toLowerCase()
@@ -61,17 +70,11 @@ function normalizeFilterText(value: string): string {
 }
 
 function formatQty(value?: number | null): string {
-  return new Intl.NumberFormat('es-CO', {
-    maximumFractionDigits: 0,
-  }).format(Number(value ?? 0));
+  return QTY_FORMATTER.format(Number(value ?? 0));
 }
 
 function formatMoney(value?: number | null): string {
-  return new Intl.NumberFormat('es-CO', {
-    style: 'currency',
-    currency: 'COP',
-    maximumFractionDigits: 0,
-  }).format(Number(value ?? 0));
+  return MONEY_FORMATTER.format(Number(value ?? 0));
 }
 
 function displayGroup(product: InventoryProductRow): string {
@@ -156,34 +159,23 @@ export function StockLevelsScreen() {
         statusFilter === 'healthy'
           ? 'ok'
           : statusFilter === 'low'
-            ? 'low'
-            : statusFilter === 'critical'
-              ? 'critical'
-              : statusFilter === 'negative'
-                ? 'negative'
-                : 'all';
+          ? 'low'
+          : statusFilter === 'critical'
+          ? 'critical'
+          : statusFilter === 'negative'
+          ? 'negative'
+          : 'all';
 
-      const [inventoryResult, groupsResult] = await Promise.allSettled([
-        listInventoryProducts(apiClient, {
-          skip: (currentPage - 1) * pageSize,
-          limit: pageSize,
-          search: search.trim() || undefined,
-          group: groupFilter.trim() || undefined,
-          status: statusQuery,
-          sort: sortBy,
-        }),
-        listProductGroups(apiClient, { skip: 0, limit: 5000 }),
-      ]);
-
-      if (groupsResult.status === 'fulfilled') {
-        setGroupOptions(groupsResult.value);
-      }
-
-      if (inventoryResult.status !== 'fulfilled') {
-        throw inventoryResult.reason;
-      }
+      const inventoryResult = await listInventoryProducts(apiClient, {
+        skip: (currentPage - 1) * pageSize,
+        limit: pageSize,
+        search: search.trim() || undefined,
+        group: groupFilter.trim() || undefined,
+        status: statusQuery,
+        sort: sortBy,
+      });
       if (requestId === requestIdRef.current) {
-        setInventoryPage(inventoryResult.value);
+        setInventoryPage(inventoryResult);
       }
     } catch (err) {
       if (requestId !== requestIdRef.current) {
@@ -192,6 +184,20 @@ export function StockLevelsScreen() {
       setError(err instanceof Error ? err.message : 'No se pudo cargar el inventario');
     }
   }, [apiClient, currentPage, groupFilter, pageSize, search, sortBy, statusFilter]);
+
+  useEffect(() => {
+    let active = true;
+    listProductGroups(apiClient, { skip: 0, limit: 5000 })
+      .then((groups) => {
+        if (active) {
+          setGroupOptions(groups);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [apiClient]);
 
   useEffect(() => {
     let active = true;
@@ -231,7 +237,9 @@ export function StockLevelsScreen() {
   }, [groupFilter, groupOptions]);
   const filteredGroupOptions = useMemo(() => {
     const term = normalizeFilterText(groupSearch);
-    const sorted = [...groupOptions].sort((left, right) => left.path.localeCompare(right.path, 'es', { sensitivity: 'base' }));
+    const sorted = [...groupOptions].sort((left, right) =>
+      left.path.localeCompare(right.path, 'es', { sensitivity: 'base' }),
+    );
     if (!term) return sorted;
     return sorted.filter((group) => {
       return (
@@ -242,7 +250,8 @@ export function StockLevelsScreen() {
     });
   }, [groupOptions, groupSearch]);
 
-  const hasFilters = Boolean(search.trim()) || Boolean(groupFilter.trim()) || statusFilter !== 'all' || sortBy !== 'stock_desc';
+  const hasFilters =
+    Boolean(search.trim()) || Boolean(groupFilter.trim()) || statusFilter !== 'all' || sortBy !== 'stock_desc';
   const isTableMode = viewMode === 'table';
 
   const showPeekPreview = useCallback((preview: PeekPreview) => {
@@ -371,12 +380,7 @@ export function StockLevelsScreen() {
               style={[styles.advancedToggleButton, showAdvancedFilters ? styles.advancedToggleButtonActive : null]}
               onPress={() => setShowAdvancedFilters((prev) => !prev)}
             >
-              <Text
-                style={[
-                  styles.advancedToggleText,
-                  showAdvancedFilters ? styles.advancedToggleTextActive : null,
-                ]}
-              >
+              <Text style={[styles.advancedToggleText, showAdvancedFilters ? styles.advancedToggleTextActive : null]}>
                 {showAdvancedFilters ? 'Ocultar filtros' : 'Mostrar filtros'}
               </Text>
             </Pressable>
@@ -386,17 +390,13 @@ export function StockLevelsScreen() {
                 style={[styles.modeButton, !isTableMode ? styles.modeButtonActive : null]}
                 onPress={() => setViewMode('cards')}
               >
-                <Text style={[styles.modeButtonText, !isTableMode ? styles.modeButtonTextActive : null]}>
-                  Cards
-                </Text>
+                <Text style={[styles.modeButtonText, !isTableMode ? styles.modeButtonTextActive : null]}>Cards</Text>
               </Pressable>
               <Pressable
                 style={[styles.modeButton, isTableMode ? styles.modeButtonActive : null]}
                 onPress={() => setViewMode('table')}
               >
-                <Text style={[styles.modeButtonText, isTableMode ? styles.modeButtonTextActive : null]}>
-                  Tabla
-                </Text>
+                <Text style={[styles.modeButtonText, isTableMode ? styles.modeButtonTextActive : null]}>Tabla</Text>
               </Pressable>
             </View>
           </View>
@@ -503,7 +503,11 @@ export function StockLevelsScreen() {
           ) : error ? (
             <View style={styles.stateWrap}>
               <Text style={styles.stateError}>{error}</Text>
-              <Pressable style={styles.retryButton} onPress={() => refreshStockData().catch(() => undefined)} disabled={!canRetry}>
+              <Pressable
+                style={styles.retryButton}
+                onPress={() => refreshStockData().catch(() => undefined)}
+                disabled={!canRetry}
+              >
                 <Text style={styles.retryButtonText}>Reintentar</Text>
               </Pressable>
             </View>
@@ -512,24 +516,24 @@ export function StockLevelsScreen() {
               <Text style={styles.stateText}>No hay productos para esos filtros.</Text>
             </View>
           ) : (
-          <FlatList
-            style={styles.cardsList}
-            data={pageItems}
-            keyExtractor={(item) => String(item.product_id)}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={() => {
-                  refreshStockData().catch(() => undefined);
-                }}
-                tintColor="#0A8F5A"
-              />
-            }
-            renderItem={({ item }) => <StockCardRow product={item} onPeekText={showPeekPreview} />}
-            ItemSeparatorComponent={RowSeparator}
-            contentContainerStyle={styles.listContent}
-            nestedScrollEnabled
-            onScrollBeginDrag={hidePeekPreview}
+            <FlatList
+              style={styles.cardsList}
+              data={pageItems}
+              keyExtractor={(item) => String(item.product_id)}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={() => {
+                    refreshStockData().catch(() => undefined);
+                  }}
+                  tintColor="#0A8F5A"
+                />
+              }
+              renderItem={({ item }) => <StockCardRow product={item} onPeekText={showPeekPreview} />}
+              ItemSeparatorComponent={RowSeparator}
+              contentContainerStyle={styles.listContent}
+              nestedScrollEnabled
+              onScrollBeginDrag={hidePeekPreview}
             />
           )}
         </View>
@@ -586,7 +590,12 @@ export function StockLevelsScreen() {
         </View>
       </Modal>
 
-      <Modal visible={showGroupPicker} transparent animationType="fade" onRequestClose={() => setShowGroupPicker(false)}>
+      <Modal
+        visible={showGroupPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowGroupPicker(false)}
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.pickerModalCard}>
             <View style={styles.pickerModalHeader}>
@@ -613,26 +622,35 @@ export function StockLevelsScreen() {
               autoCorrect={false}
             />
 
-            <ScrollView style={styles.pickerList} contentContainerStyle={styles.pickerListContent} keyboardShouldPersistTaps="handled">
-              <Pressable
-                style={styles.pickerOption}
-                onPress={() => {
-                  setCurrentPage(1);
-                  setGroupFilter('');
-                  setShowGroupPicker(false);
-                  setGroupSearch('');
-                }}
-              >
-                <Text style={styles.pickerOptionLabel}>Todas</Text>
-                <Text style={styles.pickerOptionSubtitle}>Quita este filtro</Text>
-              </Pressable>
-
-              {filteredGroupOptions.map((group) => {
+            <FlatList
+              style={styles.pickerList}
+              contentContainerStyle={styles.pickerListContent}
+              keyboardShouldPersistTaps="handled"
+              data={filteredGroupOptions}
+              keyExtractor={(group) => group.path}
+              initialNumToRender={12}
+              maxToRenderPerBatch={12}
+              windowSize={7}
+              removeClippedSubviews
+              ListHeaderComponent={
+                <Pressable
+                  style={styles.pickerOption}
+                  onPress={() => {
+                    setCurrentPage(1);
+                    setGroupFilter('');
+                    setShowGroupPicker(false);
+                    setGroupSearch('');
+                  }}
+                >
+                  <Text style={styles.pickerOptionLabel}>Todas</Text>
+                  <Text style={styles.pickerOptionSubtitle}>Quita este filtro</Text>
+                </Pressable>
+              }
+              renderItem={({ item: group }) => {
                 const selected = groupFilter === group.path;
                 const depth = Math.max(0, group.path.split('/').length - 1);
                 return (
                   <Pressable
-                    key={group.path}
                     style={[styles.pickerOption, selected ? styles.pickerOptionActive : null]}
                     onPress={() => {
                       setCurrentPage(1);
@@ -658,14 +676,13 @@ export function StockLevelsScreen() {
                     )}
                   </Pressable>
                 );
-              })}
-
-              {filteredGroupOptions.length === 0 ? (
+              }}
+              ListEmptyComponent={
                 <View style={styles.stateWrap}>
                   <Text style={styles.stateText}>No hay categorías que coincidan.</Text>
                 </View>
-              ) : null}
-            </ScrollView>
+              }
+            />
           </View>
         </View>
       </Modal>
@@ -710,7 +727,15 @@ function StockCardRow({
           </Text>
         </View>
 
-        <View style={[styles.statusChip, { borderColor: meta.borderColor, backgroundColor: meta.accentBackground }]}>
+        <View
+          style={[
+            styles.statusChip,
+            {
+              borderColor: meta.borderColor,
+              backgroundColor: meta.accentBackground,
+            },
+          ]}
+        >
           <Text style={[styles.statusChipText, { color: meta.color }]}>{meta.label}</Text>
         </View>
       </View>
@@ -718,7 +743,11 @@ function StockCardRow({
       <View style={styles.metricsRow}>
         <Metric label="Stock" value={formatQty(qty)} valueColor={qty < 0 ? '#BE123C' : '#0F172A'} />
         <Metric label="Costo stock" value={formatMoney(totalCost)} valueColor={totalCost < 0 ? '#BE123C' : '#334155'} />
-        <Metric label="Precio stock" value={formatMoney(totalPrice)} valueColor={totalPrice < 0 ? '#BE123C' : '#334155'} />
+        <Metric
+          label="Precio stock"
+          value={formatMoney(totalPrice)}
+          valueColor={totalPrice < 0 ? '#BE123C' : '#334155'}
+        />
       </View>
 
       {product.last_movement_at ? (
@@ -829,9 +858,22 @@ function StockTableRow({
   const totalPrice = Number(product.price ?? 0) * qty;
 
   return (
-    <View style={[styles.tableRow, { backgroundColor: meta.backgroundColor, borderColor: meta.borderColor }]}>
+    <View
+      style={[
+        styles.tableRow,
+        {
+          backgroundColor: meta.backgroundColor,
+          borderColor: meta.borderColor,
+        },
+      ]}
+    >
       <View style={styles.tableTitleCell}>
-        <PeekableText label="Nombre" value={product.product_name} style={styles.tableProductName} onPeekText={onPeekText} />
+        <PeekableText
+          label="Nombre"
+          value={product.product_name}
+          style={styles.tableProductName}
+          onPeekText={onPeekText}
+        />
       </View>
       <View style={styles.tableSkuCell}>
         <Text style={styles.tableCellText} numberOfLines={1}>
@@ -853,7 +895,16 @@ function StockTableRow({
         </Text>
       </View>
       <View style={styles.tableStateCell}>
-        <View style={[styles.statusChip, styles.tableStatusChip, { borderColor: meta.borderColor, backgroundColor: meta.accentBackground }]}>
+        <View
+          style={[
+            styles.statusChip,
+            styles.tableStatusChip,
+            {
+              borderColor: meta.borderColor,
+              backgroundColor: meta.accentBackground,
+            },
+          ]}
+        >
           <Text style={[styles.statusChipText, { color: meta.color }]}>{meta.label}</Text>
         </View>
       </View>
@@ -864,9 +915,7 @@ function StockTableRow({
         <Text style={styles.tableCellText}>{formatMoney(product.price)}</Text>
       </View>
       <View style={styles.tableTotalCell}>
-        <Text style={[styles.tableCellText, totalCost < 0 ? styles.negativeText : null]}>
-          {formatMoney(totalCost)}
-        </Text>
+        <Text style={[styles.tableCellText, totalCost < 0 ? styles.negativeText : null]}>{formatMoney(totalCost)}</Text>
       </View>
       <View style={styles.tableTotalCell}>
         <Text style={[styles.tableCellText, totalPrice < 0 ? styles.negativeText : null]}>
@@ -886,15 +935,7 @@ function StockTableRow({
   );
 }
 
-function Metric({
-  label,
-  value,
-  valueColor,
-}: {
-  label: string;
-  value: string;
-  valueColor: string;
-}) {
+function Metric({ label, value, valueColor }: { label: string; value: string; valueColor: string }) {
   return (
     <View style={styles.metricBox}>
       <Text style={styles.metricLabel}>{label}</Text>
@@ -905,15 +946,7 @@ function Metric({
   );
 }
 
-function FilterButton({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
+function FilterButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
     <Pressable style={[styles.filterButton, active ? styles.filterButtonActive : null]} onPress={onPress}>
       <Text style={[styles.filterButtonText, active ? styles.filterButtonTextActive : null]}>{label}</Text>

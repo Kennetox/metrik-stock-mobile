@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
@@ -14,6 +14,14 @@ import { ProductsScreen } from './ProductsScreen';
 import { StockLevelsScreen } from './StockLevelsScreen';
 import { RecountsScreen } from './RecountsScreen';
 import { formatBogotaDateTime } from '../utils/dateTime';
+
+const MemoHistoryScreen = React.memo(HistoryScreen);
+const MemoLabelsScreen = React.memo(LabelsScreen);
+const MemoLotsScreen = React.memo(LotsScreen);
+const MemoLotDetailScreen = React.memo(LotDetailScreen);
+const MemoProductsScreen = React.memo(ProductsScreen);
+const MemoRecountsScreen = React.memo(RecountsScreen);
+const MemoStockLevelsScreen = React.memo(StockLevelsScreen);
 
 type TabKey = 'lots' | 'recounts' | 'labels' | 'products' | 'stockLevels' | 'history' | 'profile';
 
@@ -83,8 +91,8 @@ export function HomeScreen() {
   const contentBottomPadding = hideBottomNav
     ? 12 + bottomInset
     : isProductsTab || isStockLevelsTab
-      ? 24 + bottomInset
-      : navReservedSpace;
+    ? 24 + bottomInset
+    : navReservedSpace;
 
   const syncMeta = getSyncMeta(syncStatus);
   const lastSyncText = lastSyncAt ? formatBogotaDateTime(lastSyncAt) : 'Sin sincronización confirmada';
@@ -104,6 +112,14 @@ export function HomeScreen() {
     setVisitedTabs((prev) => (prev[nextTab] ? prev : { ...prev, [nextTab]: true }));
     setShowUserMenu(false);
   }
+
+  const handleOpenLot = useCallback((id: number) => {
+    setSelectedLotId(id);
+  }, []);
+
+  const handleCloseLot = useCallback(() => {
+    setSelectedLotId(null);
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -151,42 +167,41 @@ export function HomeScreen() {
         </View>
       </View>
 
-      <View style={[styles.content, { paddingBottom: contentBottomPadding }, hideBottomNav ? styles.contentNoNav : null]}>
+      <View
+        style={[styles.content, { paddingBottom: contentBottomPadding }, hideBottomNav ? styles.contentNoNav : null]}
+      >
         {visitedTabs.lots ? (
           <View style={[styles.tabScene, tab === 'lots' ? null : styles.tabSceneHidden]}>
             {selectedLotId ? (
-              <LotDetailScreen
-                lotId={selectedLotId}
-                onBack={() => setSelectedLotId(null)}
-                showInlineHeader={false}
-              />
+              <MemoLotDetailScreen lotId={selectedLotId} onBack={handleCloseLot} showInlineHeader={false} />
             ) : (
-              <LotsScreen onOpenLot={(id) => setSelectedLotId(id)} />
+              <MemoLotsScreen onOpenLot={handleOpenLot} />
             )}
           </View>
         ) : null}
 
         {visitedTabs.labels ? (
           <View style={[styles.tabScene, tab === 'labels' ? null : styles.tabSceneHidden]}>
-            <LabelsScreen />
+            <MemoLabelsScreen />
           </View>
         ) : null}
 
         {visitedTabs.products ? (
           <View style={[styles.tabScene, tab === 'products' ? null : styles.tabSceneHidden]}>
-            <ProductsScreen />
+            <MemoProductsScreen />
           </View>
         ) : null}
 
         {visitedTabs.stockLevels ? (
           <View style={[styles.tabScene, tab === 'stockLevels' ? null : styles.tabSceneHidden]}>
-            <StockLevelsScreen />
+            <MemoStockLevelsScreen />
           </View>
         ) : null}
 
         {visitedTabs.recounts ? (
           <View style={[styles.tabScene, tab === 'recounts' ? null : styles.tabSceneHidden]}>
-            <RecountsScreen
+            <MemoRecountsScreen
+              isActive={tab === 'recounts'}
               onWorkspaceChange={setRecountWorkspaceOpen}
               backSignal={recountBackSignal}
             />
@@ -195,7 +210,7 @@ export function HomeScreen() {
 
         {visitedTabs.history ? (
           <View style={[styles.tabScene, tab === 'history' ? null : styles.tabSceneHidden]}>
-            <HistoryScreen />
+            <MemoHistoryScreen />
           </View>
         ) : null}
 
@@ -260,12 +275,12 @@ export function HomeScreen() {
               <Pressable style={styles.syncModalCloseButton} onPress={() => setShowSyncModal(false)}>
                 <Text style={styles.syncModalCloseText}>Cerrar</Text>
               </Pressable>
-              <Pressable
-                style={styles.syncModalRefreshButton}
-                onPress={handleRefreshSync}
-                disabled={refreshingSync}
-              >
-                {refreshingSync ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Text style={styles.syncModalRefreshText}>Revalidar</Text>}
+              <Pressable style={styles.syncModalRefreshButton} onPress={handleRefreshSync} disabled={refreshingSync}>
+                {refreshingSync ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.syncModalRefreshText}>Revalidar</Text>
+                )}
               </Pressable>
             </View>
           </View>
@@ -275,10 +290,7 @@ export function HomeScreen() {
       <Modal visible={showUserMenu} transparent animationType="fade" onRequestClose={() => setShowUserMenu(false)}>
         <Pressable style={styles.userMenuBackdrop} onPress={() => setShowUserMenu(false)}>
           <View style={styles.userMenuAnchor}>
-            <Pressable
-              style={styles.userMenuCard}
-              onPress={() => undefined}
-            >
+            <Pressable style={styles.userMenuCard} onPress={() => undefined}>
               <Pressable
                 style={styles.userMenuItem}
                 onPress={() => {
@@ -298,7 +310,11 @@ export function HomeScreen() {
 
 function getSyncMeta(status: string) {
   if (status === 'online') return { label: 'Conectado y sincronizado', color: COLORS.syncOnline };
-  if (status === 'degraded') return { label: 'Sesión o sync con advertencia', color: COLORS.syncDegraded };
+  if (status === 'degraded')
+    return {
+      label: 'Sesión o sync con advertencia',
+      color: COLORS.syncDegraded,
+    };
   if (status === 'offline') return { label: 'Sin conexión con API', color: COLORS.syncOffline };
   return { label: 'Validando conexión', color: COLORS.syncChecking };
 }
@@ -358,10 +374,7 @@ function BottomTabButton({
 }) {
   const color = active ? COLORS.tabActiveIcon : COLORS.tabIcon;
   return (
-    <Pressable
-      style={[styles.bottomTabButton, active ? styles.bottomTabButtonActive : null]}
-      onPress={onPress}
-    >
+    <Pressable style={[styles.bottomTabButton, active ? styles.bottomTabButtonActive : null]} onPress={onPress}>
       <NavIcon name={icon} color={color} />
     </Pressable>
   );
@@ -379,12 +392,7 @@ function NavIcon({
   if (name === 'home') {
     return (
       <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-        <Path
-          d="M4.6 11L12 4.7L19.4 11V19.3H4.6V11Z"
-          stroke={color}
-          strokeWidth={strokeWidth}
-          strokeLinejoin="round"
-        />
+        <Path d="M4.6 11L12 4.7L19.4 11V19.3H4.6V11Z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
       </Svg>
     );
   }
@@ -392,19 +400,8 @@ function NavIcon({
   if (name === 'tag') {
     return (
       <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-        <Path
-          d="M3 12l9-9h6l3 3v6l-9 9-9-9z"
-          stroke={color}
-          strokeWidth={1.6}
-          strokeLinejoin="round"
-        />
-        <Circle
-          cx={16.5}
-          cy={7.5}
-          r={1.5}
-          stroke={color}
-          strokeWidth={1.6}
-        />
+        <Path d="M3 12l9-9h6l3 3v6l-9 9-9-9z" stroke={color} strokeWidth={1.6} strokeLinejoin="round" />
+        <Circle cx={16.5} cy={7.5} r={1.5} stroke={color} strokeWidth={1.6} />
       </Svg>
     );
   }
@@ -419,7 +416,13 @@ function NavIcon({
           strokeLinejoin="round"
         />
         <Path d="M12 4.5V11.9" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
-        <Path d="M4.8 8.1L12 11.9L19.2 8.1" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+        <Path
+          d="M4.8 8.1L12 11.9L19.2 8.1"
+          stroke={color}
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </Svg>
     );
   }
@@ -443,18 +446,8 @@ function NavIcon({
   if (name === 'report') {
     return (
       <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-        <Path
-          d="M4 19h16"
-          stroke={color}
-          strokeWidth={1.6}
-          strokeLinecap="round"
-        />
-        <Path
-          d="M7 16V9m5 7V6m5 10v-4"
-          stroke={color}
-          strokeWidth={1.6}
-          strokeLinecap="round"
-        />
+        <Path d="M4 19h16" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
+        <Path d="M7 16V9m5 7V6m5 10v-4" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
       </Svg>
     );
   }
@@ -590,7 +583,12 @@ function ProfilePanel({
           <Text style={styles.profileLineSmall}>Última sync: {lastSyncText}</Text>
           <Text style={styles.profileLineSmall}>Último chequeo: {lastCheckText}</Text>
           {syncReason ? <Text style={styles.profileLineSmall}>Detalle: {syncReason}</Text> : null}
-          <Pressable style={styles.profileSecondaryBtn} onPress={() => { onRefreshSync().catch(() => undefined); }}>
+          <Pressable
+            style={styles.profileSecondaryBtn}
+            onPress={() => {
+              onRefreshSync().catch(() => undefined);
+            }}
+          >
             {refreshingSync ? (
               <ActivityIndicator size="small" color="#0A8F5A" />
             ) : (
