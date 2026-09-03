@@ -1777,7 +1777,9 @@ export function RecountsScreen({
                 <View style={styles.lineCard}>
                   <Text style={styles.lineName}>{line.product_name}</Text>
                   <Text style={styles.lineMeta}>
-                    SKU: {line.sku || 'N/A'} · Código de barras: {line.barcode || 'N/A'}
+                    SKU: {line.sku || 'N/A'} · Código de barras: {line.barcode || 'N/A'} · Precio:{' '}
+                    {line.price == null ? 'N/A' : formatCop(line.price)} · Último mov.:{' '}
+                    {line.last_movement_at ? formatBogotaDateTime(line.last_movement_at) : 'Sin movimientos'}
                   </Text>
                   <View style={styles.lineRow}>
                     {detail.recount.count_mode !== 'blind' ? (
